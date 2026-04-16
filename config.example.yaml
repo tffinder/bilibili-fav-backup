@@ -1,0 +1,110 @@
+# B 站配置文件示例
+# 复制此文件为 config.yaml 并填写真实信息
+
+bilibili:
+  # B 站登录 cookie (必需)
+  # 获取方式：登录 B 站后，按 F12 打开开发者工具，在 Network 标签刷新页面，找到任意请求的 Cookie 值
+  cookie: "YOUR_BILIBILI_COOKIE_HERE"
+  
+  # 收藏夹 ID (必需)
+  # 获取方式：访问 https://space.bilibili.com/你的 UID/favlist?fid=XXX，XXX 即为 fav_id
+  fav_id: "YOUR_FAV_ID_HERE"
+  
+  # Cookie 校验间隔 (秒)，默认 1 小时
+  check_cookie_interval: 3600
+
+# 下载配置
+download:
+  # 视频清晰度代码
+  # 127=8K, 125=4K, 116=1080P, 112=720P, 80=480P, 64=360P, 32=240P
+  quality: 127
+  
+  # 最大并行下载数 (单线程=1)
+  max_parallel: 1
+  
+  # 临时下载目录 (相对于项目根目录)
+  temp_dir: "./temp"
+  
+  # 下载失败重试次数
+  retry_times: 3
+  
+  # 请求延迟 (秒)，用于风控
+  request_delay: 1.0
+
+# S3 存储配置 (OpenList)
+s3:
+  # 是否启用 S3 上传，默认关闭，仅下载到本地
+  enabled: false
+
+  # 上传成功后是否自动删除本地文件
+  delete_after_upload: false
+
+  # S3 端点 URL (必需)
+  # 例如：https://s3.us-east-1.amazonaws.com 或 OpenList 提供的地址
+  endpoint_url: "YOUR_S3_ENDPOINT_URL_HERE"
+  
+  # 访问密钥 (必需)
+  access_key: "YOUR_ACCESS_KEY_HERE"
+  
+  # 秘密密钥 (必需)
+  secret_key: "YOUR_SECRET_KEY_HERE"
+  
+  # 存储桶名称 (必需)
+  bucket_name: "YOUR_BUCKET_NAME_HERE"
+  
+  # 上传超时时间 (秒)
+  upload_timeout: 300
+  
+  # 上传失败重试次数
+  retry_times: 3
+  
+  # 上传限速 (MB/s), null 为不限速
+  rate_limit: null
+  
+  # S3 区域 (通常不需要修改)
+  region_name: "us-east-1"
+
+# 定时任务配置
+scheduler:
+  # 是否启用定时任务
+  enabled: true
+  
+  # Cron 表达式 (每天凌晨 2 点执行)
+  cron: "0 2 * * *"
+  
+  # 时区
+  timezone: "Asia/Shanghai"
+
+# 通知配置
+notification:
+  # 网页通知 (显示在前端界面)
+  web_enabled: true
+  
+  # 日志文件通知
+  log_enabled: true
+  
+  # 邮件通知 (暂未实现)
+  email_enabled: false
+  email_smtp_server: ""
+  email_from: ""
+  email_to: ""
+  email_password: ""
+
+# 调试配置
+debug:
+  # 调试模式 (true 输出详细日志)
+  enabled: false
+
+  # 日志级别：DEBUG, INFO, WARNING, ERROR
+  log_level: "INFO"
+
+  # 是否保留下载的临时文件 (调试用)
+  keep_temp_files: false
+
+  # biliup 代理设置 (可选)
+  biliup_proxy: null
+
+  # ffmpeg 可执行文件路径 (可选，用于合并音视频)
+  # 如果不设置，将使用系统 PATH 中的 ffmpeg
+  # 示例: "E:\\ffmpeg-n8.0-latest-win64-gpl-8.0\\bin\\ffmpeg.exe"
+  ffmpeg_path: "E:\\ffmpeg-n8.0-latest-win64-gpl-8.0\\bin\\ffmpeg.exe"

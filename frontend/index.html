@@ -1,0 +1,2439 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>B站收藏夹备份</title>
+    <style>
+        :root {
+            --bg-primary: #f5f5f7;
+            --bg-secondary: #ffffff;
+            --bg-tertiary: rgba(255, 255, 255, 0.8);
+            --text-primary: #1d1d1f;
+            --text-secondary: #86868b;
+            --text-tertiary: #515154;
+            --accent: #0071e3;
+            --accent-hover: #0077ed;
+            --success: #34c759;
+            --warning: #ff9500;
+            --danger: #ff3b30;
+            --border: rgba(0, 0, 0, 0.08);
+            --shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+            --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.12);
+            --radius: 16px;
+            --radius-sm: 10px;
+            --transition: all 0.3s cubic-bezier(0.25, 0.1, 0.25, 1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.5;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        /* 导航栏 */
+        .navbar {
+            background: var(--bg-tertiary);
+            backdrop-filter: saturate(180%) blur(20px);
+            -webkit-backdrop-filter: saturate(180%) blur(20px);
+            border-bottom: 1px solid var(--border);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .navbar-inner {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 24px;
+            height: 52px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .navbar-brand {
+            font-size: 21px;
+            font-weight: 600;
+            letter-spacing: -0.02em;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .navbar-tabs {
+            display: flex;
+            gap: 32px;
+        }
+
+        .nav-tab {
+            font-size: 14px;
+            color: var(--text-secondary);
+            text-decoration: none;
+            padding: 16px 0;
+            border-bottom: 2px solid transparent;
+            transition: var(--transition);
+            cursor: pointer;
+        }
+
+        .nav-tab:hover {
+            color: var(--text-primary);
+        }
+
+        .nav-tab.active {
+            color: var(--accent);
+            border-bottom-color: var(--accent);
+        }
+
+        .user-menu {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .user-avatar {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .user-avatar img {
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            object-fit: cover;
+        }
+
+        /* 主容器 */
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 32px 24px;
+        }
+
+        /* 视图 */
+        .view {
+            display: none;
+            animation: fadeIn 0.3s ease;
+        }
+
+        .view.active {
+            display: block;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* 统计卡片 */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 16px;
+            margin-bottom: 32px;
+        }
+
+        .stat-card {
+            background: var(--bg-secondary);
+            border-radius: var(--radius);
+            padding: 20px;
+            box-shadow: var(--shadow);
+            transition: var(--transition);
+        }
+
+        .stat-card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-lg);
+        }
+
+        .stat-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            margin-bottom: 12px;
+        }
+
+        .stat-icon.blue { background: rgba(0, 113, 227, 0.1); }
+        .stat-icon.green { background: rgba(52, 199, 89, 0.1); }
+        .stat-icon.orange { background: rgba(255, 149, 0, 0.1); }
+        .stat-icon.red { background: rgba(255, 59, 48, 0.1); }
+        .stat-icon.purple { background: rgba(175, 82, 222, 0.1); }
+
+        .stat-value {
+            font-size: 32px;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            margin-bottom: 4px;
+        }
+
+        .stat-label {
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        /* 卡片 */
+        .card {
+            background: var(--bg-secondary);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            margin-bottom: 24px;
+            overflow: hidden;
+        }
+
+        .card-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .card-title {
+            font-size: 17px;
+            font-weight: 600;
+        }
+
+        .card-body {
+            padding: 20px 24px;
+        }
+
+        /* 按钮 */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 10px 20px;
+            font-size: 14px;
+            font-weight: 500;
+            border: none;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            transition: var(--transition);
+            text-decoration: none;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: var(--accent-hover);
+        }
+
+        .btn-secondary {
+            background: rgba(0, 113, 227, 0.1);
+            color: var(--accent);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(0, 113, 227, 0.15);
+        }
+
+        .btn-text {
+            background: transparent;
+            color: var(--accent);
+            padding: 8px 12px;
+        }
+
+        .btn-text:hover {
+            background: rgba(0, 113, 227, 0.08);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* 表单 */
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-label {
+            display: block;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 12px 16px;
+            font-size: 15px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background: var(--bg-secondary);
+            transition: var(--transition);
+            outline: none;
+        }
+
+        .form-input:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 4px rgba(0, 113, 227, 0.1);
+        }
+
+        .form-input::placeholder {
+            color: var(--text-secondary);
+        }
+
+        select.form-input {
+            cursor: pointer;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2386868b' d='M6 8.825L1.175 4 2.25 2.925 6 6.675l3.75-3.75L10.825 4z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 16px center;
+            padding-right: 40px;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 20px;
+        }
+
+        .checkbox-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            cursor: pointer;
+        }
+
+        .checkbox-wrapper input {
+            width: 18px;
+            height: 18px;
+            accent-color: var(--accent);
+        }
+
+        /* 视频列表 */
+        .video-filter {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .filter-btn {
+            padding: 8px 16px;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            cursor: pointer;
+            transition: var(--transition);
+        }
+
+        .filter-btn:hover {
+            background: var(--bg-primary);
+        }
+
+        .filter-btn.active {
+            background: var(--text-primary);
+            color: white;
+            border-color: var(--text-primary);
+        }
+
+        .video-list {
+            max-height: 600px;
+            overflow-y: auto;
+        }
+
+        .video-item {
+            display: flex;
+            gap: 16px;
+            padding: 16px 0;
+            border-bottom: 1px solid var(--border);
+            transition: var(--transition);
+        }
+
+        .video-item:last-child {
+            border-bottom: none;
+        }
+
+        .video-item:hover {
+            background: var(--bg-primary);
+            margin: 0 -24px;
+            padding: 16px 24px;
+            border-radius: var(--radius-sm);
+        }
+
+        .video-cover {
+            width: 120px;
+            height: 68px;
+            border-radius: 8px;
+            object-fit: cover;
+            background: var(--bg-primary);
+            flex-shrink: 0;
+        }
+
+        .video-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .video-title {
+            font-size: 15px;
+            font-weight: 500;
+            margin-bottom: 6px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .video-meta {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+        }
+
+        .quality-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 3px 8px;
+            background: var(--bg-primary);
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 500;
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .status-badge.completed { background: rgba(52, 199, 89, 0.12); color: #248a3d; }
+        .status-badge.uploaded { background: rgba(0, 113, 227, 0.12); color: #0071e3; }
+        .status-badge.pending { background: rgba(142, 142, 147, 0.12); color: #8e8e93; }
+        .status-badge.downloading { background: rgba(255, 149, 0, 0.12); color: #c93400; }
+        .status-badge.failed { background: rgba(255, 59, 48, 0.12); color: #d70015; }
+
+        .progress-wrapper {
+            margin-top: 8px;
+        }
+
+        .progress-bar {
+            height: 4px;
+            background: var(--bg-primary);
+            border-radius: 2px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent), #5ac8fa);
+            border-radius: 2px;
+            transition: width 0.3s ease;
+        }
+
+        .progress-text {
+            font-size: 11px;
+            color: var(--text-secondary);
+            margin-top: 4px;
+            text-align: right;
+        }
+
+        /* 下载任务 */
+        .download-task {
+            padding: 16px;
+            background: var(--bg-primary);
+            border-radius: var(--radius-sm);
+            margin-bottom: 12px;
+        }
+
+        .download-task:last-child {
+            margin-bottom: 0;
+        }
+
+        .download-task-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 12px;
+        }
+
+        .download-task-title {
+            font-size: 14px;
+            font-weight: 500;
+            margin-bottom: 4px;
+        }
+
+        .download-task-meta {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .download-task-percent {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--accent);
+        }
+
+        /* 收藏夹 */
+        .folder-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 16px;
+        }
+
+        .folder-card {
+            padding: 20px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            transition: var(--transition);
+            cursor: pointer;
+        }
+
+        .folder-card:hover {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 4px rgba(0, 113, 227, 0.1);
+        }
+
+        .folder-card.selected {
+            border-color: var(--accent);
+            background: rgba(0, 113, 227, 0.04);
+        }
+
+        .folder-title {
+            font-size: 15px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .folder-meta {
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        .folder-badge {
+            display: inline-block;
+            padding: 4px 10px;
+            background: var(--accent);
+            color: white;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 500;
+            margin-top: 12px;
+        }
+
+        /* 登录面板 */
+        .login-panel {
+            display: none;
+        }
+
+        .login-panel.active {
+            display: block;
+        }
+
+        .qr-container {
+            text-align: center;
+            padding: 24px;
+        }
+
+        .qr-image {
+            width: 200px;
+            height: 200px;
+            border-radius: var(--radius);
+            margin-bottom: 16px;
+        }
+
+        .qr-status {
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+
+        /* 通知 */
+        .notification-item {
+            padding: 14px 16px;
+            background: var(--bg-primary);
+            border-radius: var(--radius-sm);
+            margin-bottom: 10px;
+            border-left: 3px solid var(--accent);
+        }
+
+        .notification-item.warning { border-left-color: var(--warning); }
+        .notification-item.error { border-left-color: var(--danger); }
+        .notification-item.success { border-left-color: var(--success); }
+
+        .notification-title {
+            font-size: 14px;
+            font-weight: 500;
+            margin-bottom: 4px;
+        }
+
+        .notification-text {
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        /* 日志 */
+        .log-container {
+            background: #1e1e1e;
+            border-radius: var(--radius-sm);
+            padding: 16px;
+            font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+            font-size: 12px;
+            color: #d4d4d4;
+            max-height: 200px;
+            overflow-y: auto;
+            line-height: 1.6;
+        }
+
+        /* 分页 */
+        .pagination {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 16px;
+            margin-top: 20px;
+            padding-top: 16px;
+            border-top: 1px solid var(--border);
+        }
+
+        .pagination span {
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        /* 收藏夹内容弹窗 */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            animation: fadeIn 0.2s ease;
+        }
+
+        .modal-content {
+            background: var(--bg-secondary);
+            border-radius: var(--radius);
+            width: 90%;
+            max-width: 800px;
+            max-height: 80vh;
+            overflow: hidden;
+            box-shadow: var(--shadow-lg);
+        }
+
+        .modal-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-title {
+            font-size: 17px;
+            font-weight: 600;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 24px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            padding: 4px 8px;
+        }
+
+        .modal-body {
+            padding: 20px 24px;
+            max-height: 60vh;
+            overflow-y: auto;
+        }
+
+        /* 通知时间 */
+        .notification-time {
+            font-size: 11px;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+
+        /* 空状态 */
+        .empty-state {
+            text-align: center;
+            padding: 48px 24px;
+            color: var(--text-secondary);
+        }
+
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+
+        .empty-state-text {
+            font-size: 15px;
+        }
+
+        /* 用户卡片 */
+        .user-card {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 20px;
+            background: var(--bg-primary);
+            border-radius: var(--radius);
+        }
+
+        .user-card-avatar {
+            width: 64px;
+            height: 64px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 24px;
+            font-weight: 600;
+        }
+
+        .user-card-avatar img {
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            object-fit: cover;
+        }
+
+        .user-card-info h3 {
+            font-size: 17px;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .user-card-info p {
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        /* 分段控件 */
+        .segment-control {
+            display: inline-flex;
+            background: var(--bg-primary);
+            border-radius: 8px;
+            padding: 2px;
+        }
+
+        .segment-btn {
+            padding: 8px 16px;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            background: transparent;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: var(--transition);
+        }
+
+        .segment-btn.active {
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+
+        /* 响应式 */
+        @media (max-width: 768px) {
+            .navbar-tabs {
+                display: none;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .container {
+                padding: 20px 16px;
+            }
+
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* 滚动条美化 */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: rgba(0, 0, 0, 0.15);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(0, 0, 0, 0.25);
+        }
+    </style>
+</head>
+<body>
+    <!-- 导航栏 -->
+    <nav class="navbar">
+        <div class="navbar-inner">
+            <div class="navbar-brand">
+                <span>📺</span>
+                <span>B站备份</span>
+            </div>
+            <div class="navbar-tabs">
+                <a class="nav-tab active" data-view="dashboard">仪表盘</a>
+                <a class="nav-tab" data-view="account">账号</a>
+                <a class="nav-tab" data-view="folders">收藏夹</a>
+                <a class="nav-tab" data-view="watchlater">稍后观看</a>
+                <a class="nav-tab" data-view="history">历史记录</a>
+                <a class="nav-tab" data-view="settings">设置</a>
+            </div>
+            <div class="user-menu">
+                <div class="user-avatar" id="headerAvatar">?</div>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <!-- 仪表盘视图 -->
+        <div id="dashboardView" class="view active">
+            <!-- 统计 -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon blue">📺</div>
+                    <div class="stat-value" id="statTotal">0</div>
+                    <div class="stat-label">视频总数</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon green">✓</div>
+                    <div class="stat-value" id="statDownloaded" style="color: var(--success);">0</div>
+                    <div class="stat-label">下载成功</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon blue">☁️</div>
+                    <div class="stat-value" id="statUploaded" style="color: var(--accent);">0</div>
+                    <div class="stat-label">上传成功</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon orange">⏳</div>
+                    <div class="stat-value" id="statPending" style="color: var(--warning);">0</div>
+                    <div class="stat-label">待上传</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon red">⚠️</div>
+                    <div class="stat-value" id="statFailed" style="color: var(--danger);">0</div>
+                    <div class="stat-label">失败</div>
+                </div>
+            </div>
+
+            <!-- 控制面板 -->
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">控制中心</h3>
+                </div>
+                <div class="card-body">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">同步收藏夹</label>
+                            <button class="btn btn-primary" id="syncBtn" onclick="startSync()" style="width: 100%;">
+                                开始同步
+                            </button>
+                        </div>
+                        <div class="form-group" style="grid-column: span 2;">
+                            <label class="form-label">单视频下载</label>
+                            <div style="display: flex; gap: 12px;">
+                                <input type="text" class="form-input" id="singleVideoInput" placeholder="输入 BV 号或视频链接">
+                                <button class="btn btn-primary" onclick="startSingleVideoDownload()">下载</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="syncProgress" style="display: none; margin-top: 20px;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                            <span id="syncProgressText">同步中...</span>
+                            <span id="syncProgressPercent">0%</span>
+                        </div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="syncProgressFill" style="width: 0%;"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 24px;">
+                <!-- 视频列表 -->
+                <div>
+                    <div class="card">
+                        <div class="card-header">
+                            <h3 class="card-title">视频列表</h3>
+                            <span id="videoCount" style="font-size: 13px; color: var(--text-secondary);">共 0 个</span>
+                        </div>
+                        <div class="card-body">
+                            <div class="video-filter">
+                                <button class="filter-btn active" data-filter="all">全部</button>
+                                <button class="filter-btn" data-filter="downloaded">已下载</button>
+                                <button class="filter-btn" data-filter="uploaded">已上传</button>
+                                <button class="filter-btn" data-filter="pending">待上传</button>
+                                <button class="filter-btn" data-filter="failed">失败</button>
+                            </div>
+                            <div class="video-list" id="videoList">
+                                <div class="empty-state">
+                                    <div class="empty-state-icon">📺</div>
+                                    <div class="empty-state-text">加载中...</div>
+                                </div>
+                            </div>
+                            <!-- 分页控件 -->
+                            <div class="pagination" id="videoPagination" style="display: none;">
+                                <button class="btn btn-text" id="prevPageBtn" onclick="changePage(-1)">上一页</button>
+                                <span id="pageInfo">第 1 页 / 共 1 页</span>
+                                <button class="btn btn-text" id="nextPageBtn" onclick="changePage(1)">下一页</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 下载进度 -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h3 class="card-title">下载进度</h3>
+                        </div>
+                        <div class="card-body" id="downloadProgressList">
+                            <div class="empty-state">
+                                <div class="empty-state-text">暂无下载任务</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 右侧面板 -->
+                <div>
+                    <!-- 配置摘要 -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h3 class="card-title">配置摘要</h3>
+                        </div>
+                        <div class="card-body">
+                            <div style="display: grid; gap: 12px;">
+                                <div style="padding: 12px; background: var(--bg-primary); border-radius: 10px;">
+                                    <div style="font-size: 12px; color: var(--text-secondary);">当前收藏夹</div>
+                                    <div style="font-weight: 600; margin-top: 4px;" id="configFavorite">未设置</div>
+                                </div>
+                                <div style="padding: 12px; background: var(--bg-primary); border-radius: 10px;">
+                                    <div style="font-size: 12px; color: var(--text-secondary);">下载清晰度</div>
+                                    <div style="font-weight: 600; margin-top: 4px;" id="configQuality">-</div>
+                                </div>
+                                <div style="padding: 12px; background: var(--bg-primary); border-radius: 10px;">
+                                    <div style="font-size: 12px; color: var(--text-secondary);">存储模式</div>
+                                    <div style="font-weight: 600; margin-top: 4px;" id="configStorage">仅本地</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 通知 -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h3 class="card-title">通知</h3>
+                        </div>
+                        <div class="card-body" id="notificationList">
+                            <div class="empty-state">
+                                <div class="empty-state-text">暂无通知</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 日志 -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h3 class="card-title">日志</h3>
+                        </div>
+                        <div class="card-body">
+                            <div class="log-container" id="logContainer">加载中...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 账号视图 -->
+        <div id="accountView" class="view">
+            <div class="card" style="max-width: 600px;">
+                <div class="card-header">
+                    <h3 class="card-title">当前用户</h3>
+                </div>
+                <div class="card-body">
+                    <div class="user-card">
+                        <div class="user-card-avatar" id="userAvatarLarge">?</div>
+                        <img id="userAvatarImg" style="display: none; width: 64px; height: 64px; border-radius: 50%;">
+                        <div class="user-card-info">
+                            <h3 id="userNameText">未登录</h3>
+                            <p id="userMetaText">登录后显示用户信息</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card" style="max-width: 600px; margin-top: 24px;">
+                <div class="card-header">
+                    <h3 class="card-title">登录方式</h3>
+                </div>
+                <div class="card-body">
+                    <div class="segment-control" style="margin-bottom: 24px;">
+                        <button class="segment-btn active" data-login="qr">扫码登录</button>
+                        <button class="segment-btn" data-login="password">密码登录</button>
+                        <button class="segment-btn" data-login="sms">短信登录</button>
+                    </div>
+
+                    <!-- 扫码登录 -->
+                    <div id="qrLoginPanel" class="login-panel active">
+                        <div class="qr-container">
+                            <button class="btn btn-primary" onclick="startQrLogin()">生成二维码</button>
+                            <div id="qrLoginBox" style="display: none; margin-top: 20px;">
+                                <img class="qr-image" id="qrLoginImg">
+                                <div class="qr-status" id="qrLoginStatus">请使用哔哩哔哩 App 扫码</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 密码登录 -->
+                    <div id="passwordLoginPanel" class="login-panel">
+                        <div class="form-group">
+                            <label class="form-label">极验验证</label>
+                            <button class="btn btn-secondary" onclick="startGeetest('password')">启动极验</button>
+                            <span id="geetestStatusPassword" style="margin-left: 12px; font-size: 13px; color: var(--text-secondary);">未启动</span>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">用户名</label>
+                            <input type="text" class="form-input" id="pwdUsername" placeholder="用户名 / 手机号 / 邮箱">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">密码</label>
+                            <input type="password" class="form-input" id="pwdPassword" placeholder="密码">
+                        </div>
+                        <button class="btn btn-primary" onclick="passwordLogin()">登录</button>
+                    </div>
+
+                    <!-- 短信登录 -->
+                    <div id="smsLoginPanel" class="login-panel">
+                        <div class="form-group">
+                            <label class="form-label">极验验证</label>
+                            <button class="btn btn-secondary" onclick="startGeetest('sms')">启动极验</button>
+                            <span id="geetestStatusSms" style="margin-left: 12px; font-size: 13px; color: var(--text-secondary);">未启动</span>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">手机号</label>
+                                <input type="text" class="form-input" id="smsPhone" placeholder="13800138000">
+                            </div>
+                            <div class="form-group" style="max-width: 100px;">
+                                <label class="form-label">区号</label>
+                                <input type="text" class="form-input" id="smsCountry" value="+86">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <button class="btn btn-secondary" onclick="sendSmsCode()">发送验证码</button>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">验证码</label>
+                            <input type="text" class="form-input" id="smsCode" placeholder="请输入验证码">
+                        </div>
+                        <button class="btn btn-primary" onclick="smsLogin()">登录</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 收藏夹视图 -->
+        <div id="foldersView" class="view">
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">我的收藏夹</h3>
+                    <button class="btn btn-secondary" onclick="loadUserFavorites()">刷新</button>
+                </div>
+                <div class="card-body">
+                    <p style="color: var(--text-secondary); margin-bottom: 20px;">选择要备份的收藏夹，选中的收藏夹将参与定时增量下载</p>
+
+                    <!-- 添加外部收藏夹 -->
+                    <div style="margin-bottom: 24px; padding: 16px; background: var(--bg-primary); border-radius: 12px;">
+                        <div style="font-size: 14px; font-weight: 500; margin-bottom: 12px;">添加其他用户的收藏夹</div>
+                        <div style="display: flex; gap: 12px; align-items: center;">
+                            <input type="text" class="form-input" id="externalFavIdInput" placeholder="输入收藏夹 ID 或链接 (如: 123456789)" style="flex: 1;">
+                            <button class="btn btn-primary" onclick="addExternalFavorite()">添加</button>
+                        </div>
+                        <div style="font-size: 12px; color: var(--text-secondary); margin-top: 8px;">
+                            提示：可以从收藏夹分享链接中获取 ID，如 https://space.bilibili.com/xxx/favlist?fid=123456789
+                        </div>
+                    </div>
+
+                    <div class="folder-grid" id="folderList">
+                        <div class="empty-state">
+                            <div class="empty-state-icon">📁</div>
+                            <div class="empty-state-text">请先登录账号</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 稍后观看视图 -->
+        <div id="watchlaterView" class="view">
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">稍后观看</h3>
+                    <button class="btn btn-secondary" onclick="loadWatchLater()">刷新</button>
+                </div>
+                <div class="card-body">
+                    <div class="video-list" id="watchLaterList">
+                        <div class="empty-state">
+                            <div class="empty-state-icon">⏰</div>
+                            <div class="empty-state-text">加载中...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 历史记录视图 -->
+        <div id="historyView" class="view">
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">观看历史</h3>
+                    <button class="btn btn-secondary" onclick="loadWatchHistory()">刷新</button>
+                </div>
+                <div class="card-body">
+                    <div class="video-list" id="historyList">
+                        <div class="empty-state">
+                            <div class="empty-state-icon">📜</div>
+                            <div class="empty-state-text">加载中...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 设置视图 -->
+        <div id="settingsView" class="view">
+            <div class="card">
+                <div class="card-header">
+                    <h3 class="card-title">系统设置</h3>
+                </div>
+                <div class="card-body">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">B站 Cookie</label>
+                            <input type="text" class="form-input" id="cookieInput" placeholder="粘贴 Cookie">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">收藏夹 ID</label>
+                            <input type="text" class="form-input" id="favIdInput" placeholder="收藏夹 ID">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">下载清晰度</label>
+                            <select class="form-input" id="qualityInput">
+                                <option value="127">8K 超高清</option>
+                                <option value="126">杜比视界</option>
+                                <option value="125">4K 超清</option>
+                                <option value="120">4K HDR</option>
+                                <option value="116">1080P 高码率</option>
+                                <option value="112">1080P+</option>
+                                <option value="80">1080P</option>
+                                <option value="64">720P</option>
+                                <option value="32">480P</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">重试次数</label>
+                            <input type="number" class="form-input" id="retryInput" value="3">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">请求延迟（秒）</label>
+                            <input type="number" class="form-input" id="delayInput" value="1" step="0.1">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">临时目录</label>
+                            <input type="text" class="form-input" id="tempDirInput" value="./temp">
+                        </div>
+                    </div>
+
+                    <h4 style="margin: 24px 0 16px; font-size: 15px; color: var(--text-tertiary);">S3 存储（可选）</h4>
+                    <div class="form-row">
+                        <label class="checkbox-wrapper">
+                            <input type="checkbox" id="s3Enabled" onchange="toggleS3Fields()">
+                            <span>启用 S3 上传</span>
+                        </label>
+                        <div class="form-group">
+                            <label class="form-label">Endpoint URL</label>
+                            <input type="text" class="form-input s3-field" id="s3Endpoint" placeholder="https://...">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Access Key</label>
+                            <input type="text" class="form-input s3-field" id="s3AccessKey">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Secret Key</label>
+                            <input type="password" class="form-input s3-field" id="s3SecretKey">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Bucket</label>
+                            <input type="text" class="form-input s3-field" id="s3Bucket">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Region</label>
+                            <input type="text" class="form-input s3-field" id="s3Region" value="us-east-1">
+                        </div>
+                        <label class="checkbox-wrapper s3-field">
+                            <input type="checkbox" id="s3DeleteAfterUpload">
+                            <span>上传后删除本地文件</span>
+                        </label>
+                    </div>
+
+                    <h4 style="margin: 24px 0 16px; font-size: 15px; color: var(--text-tertiary);">定时任务</h4>
+                    <div class="form-row">
+                        <label class="checkbox-wrapper">
+                            <input type="checkbox" id="schedulerEnabled">
+                            <span>启用定时同步</span>
+                        </label>
+                        <div class="form-group">
+                            <label class="form-label">Cron 表达式</label>
+                            <input type="text" class="form-input" id="schedulerCron" value="0 2 * * *">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">时区</label>
+                            <input type="text" class="form-input" id="schedulerTimezone" value="Asia/Shanghai">
+                        </div>
+                    </div>
+
+                    <div style="margin-top: 24px; display: flex; gap: 12px; flex-wrap: wrap;">
+                        <button class="btn btn-primary" onclick="saveConfig()">保存设置</button>
+                        <button class="btn btn-secondary" onclick="loadConfig()">重新加载</button>
+                        <button class="btn btn-text" onclick="testCookie()">测试 Cookie</button>
+                        <button class="btn btn-text" onclick="testS3()">测试 S3 连接</button>
+                    </div>
+
+                    <!-- 高级设置 -->
+                    <h4 style="margin: 24px 0 16px; font-size: 15px; color: var(--text-tertiary);">高级设置</h4>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">FFmpeg 路径（可选）</label>
+                            <input type="text" class="form-input" id="ffmpegPathInput" placeholder="E:\ffmpeg-n8.0-latest-win64-gpl-8.0\bin\ffmpeg.exe">
+                            <div style="font-size: 12px; color: var(--text-secondary); margin-top: 4px;">
+                                用于合并音视频，如未安装请先下载：<a href="https://www.gitee.com/mirrors/ffmpeg-builds/releases" target="_blank">下载 FFmpeg</a>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">代理地址（可选）</label>
+                            <input type="text" class="form-input" id="proxyInput" placeholder="http://127.0.0.1:7890">
+                        </div>
+                        <label class="checkbox-wrapper">
+                            <input type="checkbox" id="keepTempFiles">
+                            <span>保留临时文件</span>
+                        </label>
+                    </div>
+
+                    <!-- S3 速度测试 -->
+                    <div id="s3SpeedTest" style="display: none; margin-top: 24px; padding: 16px; background: var(--bg-primary); border-radius: var(--radius-sm);">
+                        <h4 style="margin-bottom: 16px; font-size: 15px;">S3 上传速度测试</h4>
+                        <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+                            <div class="form-group" style="margin-bottom: 0; max-width: 150px;">
+                                <label class="form-label">测试文件大小</label>
+                                <select class="form-input" id="s3TestSize">
+                                    <option value="1">1 MB</option>
+                                    <option value="5">5 MB</option>
+                                    <option value="10" selected>10 MB</option>
+                                    <option value="25">25 MB</option>
+                                    <option value="50">50 MB</option>
+                                    <option value="100">100 MB</option>
+                                </select>
+                            </div>
+                            <label class="checkbox-wrapper" style="margin-top: 20px;">
+                                <input type="checkbox" id="s3UniqueFolder" checked>
+                                <span>使用唯一文件夹（推荐）</span>
+                            </label>
+                            <button class="btn btn-secondary" id="s3SpeedBtn" onclick="testS3Speed()" style="margin-top: 20px;">开始测速</button>
+                        </div>
+                        <div id="s3SpeedResult" style="margin-top: 16px; display: none;">
+                            <div style="padding: 12px; background: var(--bg-secondary); border-radius: 8px;">
+                                <div id="s3SpeedText"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '/api';
+        const QUALITY_LABELS = {
+            127: '8K超清', 126: '杜比视界', 125: '4K超清', 120: '4K HDR',
+            116: '1080P高码', 112: '1080P+', 80: '1080P',
+            74: '720P60', 64: '720P', 48: '720P60',
+            32: '480P', 16: '360P'
+        };
+
+        let currentQrSessionId = '';
+        let qrPollTimer = null;
+        let currentGeetestSessionIdPassword = '';
+        let currentGeetestSessionIdSms = '';
+        let currentSmsCaptchaId = '';
+        let allVideos = [];
+        let currentFilter = 'all';
+        let currentPage = 1;
+        let totalPages = 1;
+        const pageSize = 20;
+
+        // 初始化
+        document.addEventListener('DOMContentLoaded', async () => {
+            initNavigation();
+            initFilters();
+            initLoginTabs();
+
+            await loadConfig();
+            await loadCurrentUserData();
+            await loadStatus();
+            await loadVideos();
+            await loadNotifications();
+            await loadLogs();
+            await loadDownloadProgress();
+
+            setInterval(loadStatus, 5000);
+            setInterval(loadDownloadProgress, 2000);
+            // 移除自动刷新视频列表，避免分页跳转
+        });
+
+        // 导航
+        function initNavigation() {
+            document.querySelectorAll('.nav-tab').forEach(tab => {
+                tab.addEventListener('click', () => {
+                    const view = tab.dataset.view;
+                    switchView(view);
+                });
+            });
+        }
+
+        function switchView(viewName) {
+            document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+            document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+
+            const viewMap = {
+                'dashboard': 'dashboardView',
+                'account': 'accountView',
+                'folders': 'foldersView',
+                'watchlater': 'watchlaterView',
+                'history': 'historyView',
+                'settings': 'settingsView'
+            };
+
+            document.getElementById(viewMap[viewName]).classList.add('active');
+            document.querySelector(`.nav-tab[data-view="${viewName}"]`).classList.add('active');
+
+            // 切换视图时加载对应数据
+            if (viewName === 'watchlater') {
+                loadWatchLater();
+            } else if (viewName === 'history') {
+                loadWatchHistory();
+            } else if (viewName === 'folders') {
+                loadUserFavorites();
+            }
+        }
+
+        // 过滤器
+        function initFilters() {
+            document.querySelectorAll('.filter-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    currentFilter = btn.dataset.filter;
+                    renderVideoList();
+                });
+            });
+        }
+
+        // 登录标签
+        function initLoginTabs() {
+            document.querySelectorAll('.segment-btn[data-login]').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    document.querySelectorAll('.segment-btn[data-login]').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+
+                    document.querySelectorAll('.login-panel').forEach(p => p.classList.remove('active'));
+                    document.getElementById(btn.dataset.login + 'LoginPanel').classList.add('active');
+                });
+            });
+        }
+
+        function toggleS3Fields() {
+            const enabled = document.getElementById('s3Enabled').checked;
+            document.querySelectorAll('.s3-field').forEach(el => {
+                el.style.opacity = enabled ? '1' : '0.5';
+                el.querySelectorAll('input').forEach(inp => inp.disabled = !enabled);
+            });
+        }
+
+        // 加载状态
+        async function loadStatus() {
+            try {
+                const res = await fetch(`${API_BASE}/status`);
+                const data = await res.json();
+
+                document.getElementById('statTotal').textContent = data.total_videos || 0;
+                document.getElementById('syncBtn').disabled = data.is_syncing;
+
+                const progressContainer = document.getElementById('syncProgress');
+                if (data.is_syncing) {
+                    progressContainer.style.display = 'block';
+                    const progressRes = await fetch(`${API_BASE}/sync/progress`);
+                    const progressData = await progressRes.json();
+                    const p = progressData.progress || {};
+                    const percent = p.total > 0 ? Math.round((p.current / p.total) * 100) : 0;
+                    document.getElementById('syncProgressFill').style.width = percent + '%';
+                    document.getElementById('syncProgressPercent').textContent = percent + '%';
+                    document.getElementById('syncProgressText').textContent = p.current_video || '同步中...';
+                } else {
+                    progressContainer.style.display = 'none';
+                }
+            } catch (e) {
+                console.error('加载状态失败:', e);
+            }
+        }
+
+        // 加载视频
+        async function loadVideos() {
+            try {
+                const res = await fetch(`${API_BASE}/videos?page=${currentPage}&page_size=${pageSize}`);
+                allVideos = await res.json();
+
+                // 获取总数用于分页（从状态接口获取）
+                const statusRes = await fetch(`${API_BASE}/status`);
+                const statusData = await statusRes.json();
+                const totalVideos = statusData.total_videos || 0;
+                totalPages = Math.ceil(totalVideos / pageSize);
+
+                renderVideoList();
+                updateStats();
+                updatePagination();
+            } catch (e) {
+                console.error('加载视频失败:', e);
+            }
+        }
+
+        function updateStats() {
+            let downloaded = 0, uploaded = 0, pending = 0, failed = 0;
+            allVideos.forEach(v => {
+                const status = v.download_status || (v.s3_uploaded ? 'completed' : 'pending');
+                if (status === 'completed') {
+                    downloaded++;
+                    if (v.s3_uploaded) uploaded++;
+                    else pending++;
+                } else if (status === 'failed' || status === 'upload_failed') {
+                    failed++;
+                }
+            });
+            document.getElementById('statDownloaded').textContent = downloaded;
+            document.getElementById('statUploaded').textContent = uploaded;
+            document.getElementById('statPending').textContent = pending;
+            document.getElementById('statFailed').textContent = failed;
+        }
+
+        function updatePagination() {
+            const pagination = document.getElementById('videoPagination');
+            const pageInfo = document.getElementById('pageInfo');
+            const prevBtn = document.getElementById('prevPageBtn');
+            const nextBtn = document.getElementById('nextPageBtn');
+            const videoCount = document.getElementById('videoCount');
+
+            if (totalPages > 1) {
+                pagination.style.display = 'flex';
+                pageInfo.textContent = `第 ${currentPage} 页 / 共 ${totalPages} 页`;
+                prevBtn.disabled = currentPage <= 1;
+                nextBtn.disabled = currentPage >= totalPages;
+            } else {
+                pagination.style.display = 'none';
+            }
+
+            videoCount.textContent = `共 ${allVideos.length} 个`;
+        }
+
+        function changePage(delta) {
+            const newPage = currentPage + delta;
+            if (newPage >= 1 && newPage <= totalPages) {
+                currentPage = newPage;
+                loadVideos();
+            }
+        }
+
+        function renderVideoList() {
+            const container = document.getElementById('videoList');
+            let filtered = allVideos;
+
+            if (currentFilter === 'downloaded') {
+                filtered = allVideos.filter(v => v.download_status === 'completed' || v.s3_uploaded);
+            } else if (currentFilter === 'uploaded') {
+                filtered = allVideos.filter(v => v.s3_uploaded);
+            } else if (currentFilter === 'pending') {
+                filtered = allVideos.filter(v => !v.s3_uploaded && v.download_status !== 'failed');
+            } else if (currentFilter === 'failed') {
+                filtered = allVideos.filter(v => v.download_status === 'failed' || v.upload_failed);
+            }
+
+            if (filtered.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">📺</div>
+                        <div class="empty-state-text">暂无视频</div>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = filtered.map(video => {
+                const status = getVideoStatus(video);
+                const quality = QUALITY_LABELS[video.quality] || video.quality + 'P';
+                const maxQuality = QUALITY_LABELS[video.max_quality || video.quality] || quality;
+                // 使用本地封面 API
+                const coverUrl = video.bvid ? `/api/covers/${video.bvid}` : (video.cover_url || 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 120 68%22><rect fill=%22%23f5f5f7%22 width=%22120%22 height=%2268%22/></svg>');
+
+                return `
+                    <div class="video-item">
+                        <img class="video-cover" src="${coverUrl}" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 120 68%22><rect fill=%22%23f5f5f7%22 width=%22120%22 height=%2268%22/></svg>'">
+                        <div class="video-info">
+                            <div class="video-title">${escapeHtml(video.title)}</div>
+                            <div class="video-meta">
+                                <span class="quality-badge">📥 ${quality}</span>
+                                <span class="quality-badge">🎬 ${maxQuality}</span>
+                                <span>P${video.page}/${video.total_pages}</span>
+                            </div>
+                            <div>
+                                <span class="status-badge ${status.class}">${status.text}</span>
+                            </div>
+                            ${video.download_status === 'downloading' || video.download_status === 'uploading' ? `
+                                <div class="progress-wrapper">
+                                    <div class="progress-bar">
+                                        <div class="progress-fill" style="width: ${Math.round(video.download_progress || 0)}%"></div>
+                                    </div>
+                                    <div class="progress-text">${Math.round(video.download_progress || 0)}%</div>
+                                </div>
+                            ` : ''}
+                        </div>
+                        <div style="display: flex; gap: 8px; align-items: flex-start;">
+                            ${video.play_url ? `<button class="btn btn-text" onclick="window.open('${video.play_url}')">播放</button>` : ''}
+                            <button class="btn btn-text" onclick="startSingleVideoDownload('${video.bvid}')">重下</button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function getVideoStatus(video) {
+            const status = video.download_status || (video.s3_uploaded ? 'completed' : 'pending');
+
+            if (video.upload_failed) return { class: 'failed', text: '❌ 上传失败' };
+            if (status === 'completed') return video.s3_uploaded
+                ? { class: 'uploaded', text: '✓ 已上传' }
+                : { class: 'completed', text: '✓ 下载完成' };
+            if (status === 'downloading') return { class: 'downloading', text: '⏬ 下载中' };
+            if (status === 'uploading') return { class: 'downloading', text: '⏫ 上传中' };
+            if (status === 'failed') return { class: 'failed', text: '❌ 下载失败' };
+            return { class: 'pending', text: '⏳ 待上传' };
+        }
+
+        // 下载进度
+        async function loadDownloadProgress() {
+            try {
+                const res = await fetch(`${API_BASE}/download-progress?active_only=true`);
+                const items = await res.json();
+                const container = document.getElementById('downloadProgressList');
+
+                if (!items || items.length === 0) {
+                    container.innerHTML = '<div class="empty-state"><div class="empty-state-text">暂无下载任务</div></div>';
+                    return;
+                }
+
+                container.innerHTML = items.map(item => `
+                    <div class="download-task">
+                        <div class="download-task-header">
+                            <div>
+                                <div class="download-task-title">${escapeHtml(item.title || item.bvid)}</div>
+                                <div class="download-task-meta">${item.status} · P${item.page || 1}</div>
+                            </div>
+                            <div class="download-task-percent">${Math.round(item.progress || 0)}%</div>
+                        </div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" style="width: ${Math.round(item.progress || 0)}%"></div>
+                        </div>
+                        ${item.message ? `<div style="font-size: 12px; color: var(--text-secondary); margin-top: 8px;">${escapeHtml(item.message)}</div>` : ''}
+                    </div>
+                `).join('');
+            } catch (e) {
+                console.error('加载下载进度失败:', e);
+            }
+        }
+
+        // 通知
+        async function loadNotifications() {
+            try {
+                const res = await fetch(`${API_BASE}/notifications?limit=5`);
+                const notifications = await res.json();
+                const container = document.getElementById('notificationList');
+
+                if (!notifications.length) {
+                    container.innerHTML = '<div class="empty-state"><div class="empty-state-text">暂无通知</div></div>';
+                    return;
+                }
+
+                container.innerHTML = notifications.map(n => `
+                    <div class="notification-item ${n.level}">
+                        <div class="notification-title">${escapeHtml(n.title)}</div>
+                        <div class="notification-text">${escapeHtml(n.message)}</div>
+                        <div class="notification-time">${formatTime(n.created_at)}</div>
+                    </div>
+                `).join('');
+            } catch (e) {
+                console.error('加载通知失败:', e);
+            }
+        }
+
+        // 格式化时间
+        function formatTime(isoString) {
+            if (!isoString) return '';
+            const date = new Date(isoString);
+            const now = new Date();
+            const diff = now - date;
+
+            if (diff < 60000) return '刚刚';
+            if (diff < 3600000) return Math.floor(diff / 60000) + ' 分钟前';
+            if (diff < 86400000) return Math.floor(diff / 3600000) + ' 小时前';
+            if (diff < 604800000) return Math.floor(diff / 86400000) + ' 天前';
+
+            return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        }
+
+        // 日志
+        async function loadLogs() {
+            try {
+                const res = await fetch(`${API_BASE}/logs?lines=20`);
+                const data = await res.json();
+                const container = document.getElementById('logContainer');
+
+                if (data.logs && data.logs.length) {
+                    container.innerHTML = data.logs.map(l => `<div>${escapeHtml(l)}</div>`).join('');
+                    container.scrollTop = container.scrollHeight;
+                } else {
+                    container.innerHTML = '<div style="color: #666;">暂无日志</div>';
+                }
+            } catch (e) {
+                console.error('加载日志失败:', e);
+            }
+        }
+
+        // 同步
+        async function startSync() {
+            if (!confirm('确定开始同步收藏夹？')) return;
+
+            try {
+                const res = await fetch(`${API_BASE}/sync/start`, { method: 'POST' });
+                const result = await res.json();
+
+                if (result.success) {
+                    loadStatus();
+                } else {
+                    alert('启动失败：' + (result.message || '未知错误'));
+                }
+            } catch (e) {
+                alert('启动同步失败：' + e.message);
+            }
+        }
+
+        // 单视频下载
+        async function startSingleVideoDownload(bvid) {
+            const input = document.getElementById('singleVideoInput');
+            const value = bvid || (input.value || '').trim();
+
+            if (!value) {
+                alert('请输入 BV 号或视频链接');
+                return;
+            }
+
+            try {
+                const res = await fetch(`${API_BASE}/download-video`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ video_input: value })
+                });
+                const result = await res.json();
+
+                if (result.success) {
+                    if (!bvid) input.value = '';
+                    loadDownloadProgress();
+                } else {
+                    alert('启动失败：' + (result.message || '未知错误'));
+                }
+            } catch (e) {
+                alert('启动下载失败：' + e.message);
+            }
+        }
+
+        // 配置
+        async function loadConfig() {
+            try {
+                const res = await fetch(`${API_BASE}/config`);
+                const cfg = await res.json();
+
+                document.getElementById('cookieInput').value = cfg.bilibili_cookie || '';
+                document.getElementById('favIdInput').value = cfg.bilibili_fav_id || '';
+                document.getElementById('qualityInput').value = cfg.download_quality || 127;
+                document.getElementById('retryInput').value = cfg.download_retry_times ?? 3;
+                document.getElementById('delayInput').value = cfg.download_request_delay ?? 1;
+                document.getElementById('tempDirInput').value = cfg.download_temp_dir || './temp';
+
+                document.getElementById('s3Enabled').checked = cfg.s3_enabled || false;
+                document.getElementById('s3Endpoint').value = cfg.s3_endpoint_url || '';
+                document.getElementById('s3AccessKey').value = cfg.s3_access_key || '';
+                document.getElementById('s3SecretKey').value = cfg.s3_secret_key || '';
+                document.getElementById('s3Bucket').value = cfg.s3_bucket_name || '';
+                document.getElementById('s3Region').value = cfg.s3_region_name || 'us-east-1';
+                document.getElementById('s3DeleteAfterUpload').checked = cfg.s3_delete_after_upload || false;
+
+                document.getElementById('schedulerEnabled').checked = cfg.scheduler_enabled || false;
+                document.getElementById('schedulerCron').value = cfg.scheduler_cron || '0 2 * * *';
+                document.getElementById('schedulerTimezone').value = cfg.scheduler_timezone || 'Asia/Shanghai';
+
+                // 高级设置
+                document.getElementById('ffmpegPathInput').value = cfg.debug_ffmpeg_path || '';
+                document.getElementById('proxyInput').value = cfg.debug_biliup_proxy || '';
+                document.getElementById('keepTempFiles').checked = cfg.debug_keep_temp_files || false;
+
+                toggleS3Fields();
+
+                const qualityLabel = QUALITY_LABELS[cfg.download_quality] || cfg.download_quality + 'P';
+                document.getElementById('configQuality').textContent = qualityLabel;
+                document.getElementById('configStorage').textContent = cfg.s3_enabled ? '本地 + S3' : '仅本地';
+            } catch (e) {
+                console.error('加载配置失败:', e);
+            }
+        }
+
+        async function saveConfig() {
+            try {
+                const res = await fetch(`${API_BASE}/config`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        bilibili_cookie: document.getElementById('cookieInput').value,
+                        bilibili_fav_id: document.getElementById('favIdInput').value,
+                        download_quality: parseInt(document.getElementById('qualityInput').value) || 127,
+                        download_retry_times: parseInt(document.getElementById('retryInput').value) || 3,
+                        download_request_delay: parseFloat(document.getElementById('delayInput').value) || 1,
+                        download_temp_dir: document.getElementById('tempDirInput').value,
+                        s3_enabled: document.getElementById('s3Enabled').checked,
+                        s3_endpoint_url: document.getElementById('s3Endpoint').value,
+                        s3_access_key: document.getElementById('s3AccessKey').value,
+                        s3_secret_key: document.getElementById('s3SecretKey').value,
+                        s3_bucket_name: document.getElementById('s3Bucket').value,
+                        s3_region_name: document.getElementById('s3Region').value,
+                        s3_delete_after_upload: document.getElementById('s3DeleteAfterUpload').checked,
+                        scheduler_enabled: document.getElementById('schedulerEnabled').checked,
+                        scheduler_cron: document.getElementById('schedulerCron').value,
+                        scheduler_timezone: document.getElementById('schedulerTimezone').value,
+                        debug_ffmpeg_path: document.getElementById('ffmpegPathInput').value || null,
+                        debug_biliup_proxy: document.getElementById('proxyInput').value || null,
+                        debug_keep_temp_files: document.getElementById('keepTempFiles').checked
+                    })
+                });
+                const result = await res.json();
+
+                if (result.success) {
+                    alert('设置已保存');
+                    await loadConfig();
+                    await loadCurrentUserData();
+                } else {
+                    alert('保存失败：' + (result.message || '未知错误'));
+                }
+            } catch (e) {
+                alert('保存失败：' + e.message);
+            }
+        }
+
+        async function testCookie() {
+            try {
+                const res = await fetch(`${API_BASE}/test/cookie`, { method: 'POST' });
+                const result = await res.json();
+                alert(result.success ? '✓ Cookie 有效' : '✗ Cookie 无效：' + result.message);
+            } catch (e) {
+                alert('测试失败：' + e.message);
+            }
+        }
+
+        async function testS3() {
+            try {
+                const res = await fetch(`${API_BASE}/test/s3`, { method: 'POST' });
+                const result = await res.json();
+
+                if (result.success) {
+                    alert('✓ S3 连接成功');
+                    // 显示速度测试区域
+                    document.getElementById('s3SpeedTest').style.display = 'block';
+                } else {
+                    alert('✗ S3 连接失败：' + result.message);
+                }
+            } catch (e) {
+                alert('测试失败：' + e.message);
+            }
+        }
+
+        async function testS3Speed() {
+            const sizeSelect = document.getElementById('s3TestSize');
+            const uniqueFolder = document.getElementById('s3UniqueFolder').checked;
+            const btn = document.getElementById('s3SpeedBtn');
+            const resultDiv = document.getElementById('s3SpeedResult');
+            const resultText = document.getElementById('s3SpeedText');
+
+            const fileSize = sizeSelect.value;
+
+            btn.disabled = true;
+            btn.textContent = '测速中...';
+            resultDiv.style.display = 'none';
+
+            try {
+                const res = await fetch(`${API_BASE}/test/s3/speed?file_size_mb=${fileSize}&unique_folder=${uniqueFolder}`, {
+                    method: 'POST'
+                });
+                const result = await res.json();
+
+                resultDiv.style.display = 'block';
+
+                if (result.success && result.data) {
+                    const data = result.data;
+                    resultText.innerHTML = `
+                        <div style="font-size: 24px; font-weight: 600; color: var(--success); margin-bottom: 8px;">
+                            ${data.speed_mbps.toFixed(2)} MB/s
+                        </div>
+                        <div style="font-size: 14px; color: var(--text-secondary);">
+                            ${data.speed_mbps_bits.toFixed(2)} Mbps · 文件大小 ${data.file_size_mb} MB · 耗时 ${data.upload_time_seconds}s
+                        </div>
+                    `;
+                } else {
+                    resultText.innerHTML = `<span style="color: var(--danger);">测速失败：${result.message}</span>`;
+                }
+            } catch (e) {
+                resultDiv.style.display = 'block';
+                resultText.innerHTML = `<span style="color: var(--danger);">测速失败：${e.message}</span>`;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '开始测速';
+            }
+        }
+
+        // 用户数据
+        async function loadCurrentUserData() {
+            try {
+                const userRes = await fetch(`${API_BASE}/auth/me`);
+                const userResult = await userRes.json();
+
+                if (userResult.success && userResult.data) {
+                    renderUserProfile(userResult.data);
+
+                    // 登录成功后自动加载所有用户数据
+                    await Promise.all([
+                        loadUserFavorites(),
+                        loadWatchLater(),
+                        loadWatchHistory()
+                    ]);
+                } else {
+                    renderUserProfile(null);
+                    renderFavoriteFolders([]);
+                }
+            } catch (e) {
+                console.error('加载用户数据失败:', e);
+                renderUserProfile(null);
+            }
+        }
+
+        function renderUserProfile(profile) {
+            const headerAvatar = document.getElementById('headerAvatar');
+            const largeAvatar = document.getElementById('userAvatarLarge');
+            const avatarImg = document.getElementById('userAvatarImg');
+            const nameText = document.getElementById('userNameText');
+            const metaText = document.getElementById('userMetaText');
+
+            if (!profile) {
+                headerAvatar.textContent = '?';
+                largeAvatar.textContent = '?';
+                largeAvatar.style.display = 'flex';
+                avatarImg.style.display = 'none';
+                nameText.textContent = '未登录';
+                metaText.textContent = '登录后显示用户信息';
+                return;
+            }
+
+            const initial = (profile.name || '?').slice(0, 1).toUpperCase();
+            headerAvatar.textContent = initial;
+            largeAvatar.textContent = initial;
+
+            if (profile.avatar) {
+                avatarImg.src = profile.avatar;
+                avatarImg.style.display = 'block';
+                largeAvatar.style.display = 'none';
+                headerAvatar.innerHTML = `<img src="${profile.avatar}">`;
+            }
+
+            nameText.textContent = profile.name || '已登录';
+            metaText.textContent = `UID ${profile.uid}${profile.level ? ' · Lv' + profile.level : ''}`;
+        }
+
+        function renderFavoriteFolders(folders) {
+            const container = document.getElementById('folderList');
+
+            if (!folders.length) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">📁</div>
+                        <div class="empty-state-text">暂无收藏夹，请检查 Cookie 是否有效或添加外部收藏夹</div>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = folders.map(f => `
+                <div class="folder-card ${f.selected ? 'selected' : ''}">
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                        <div class="folder-title" style="flex: 1;">${escapeHtml(f.title || '未命名')}</div>
+                        <button class="btn btn-text" onclick="removeFavoriteFolder(${f.id}, event)" style="padding: 4px 8px; font-size: 12px; color: var(--danger);">移除</button>
+                    </div>
+                    <div class="folder-meta">${f.media_count || 0} 个视频 · 已缓存 ${f.cache_count || 0} 个 · ID: ${f.id}</div>
+                    ${f.selected ? '<span class="folder-badge">已选择</span>' : ''}
+                    <div style="display: flex; gap: 8px; margin-top: 12px;">
+                        <button class="btn btn-text" onclick="event.stopPropagation(); showFolderContent(${f.id}, '${escapeHtml(f.title || '')}')">查看</button>
+                        <button class="btn ${f.selected ? 'btn-secondary' : 'btn-text'}" onclick="event.stopPropagation(); toggleFavoriteFolder(${f.id}, ${!f.selected})">${f.selected ? '取消选择' : '选择备份'}</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // 显示收藏夹内容弹窗
+        let currentFolderPage = 1;
+        let currentFolderId = null;
+        let currentFolderTitle = '';
+
+        async function showFolderContent(favId, title) {
+            currentFolderId = favId;
+            currentFolderTitle = title;
+            currentFolderPage = 1;
+
+            // 创建弹窗
+            const modal = document.createElement('div');
+            modal.className = 'modal-overlay';
+            modal.id = 'folderModal';
+            modal.innerHTML = `
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h3 class="modal-title">${escapeHtml(title)} - 视频列表</h3>
+                        <button class="modal-close" onclick="closeFolderModal()">&times;</button>
+                    </div>
+                    <div class="modal-body" id="folderContentList">
+                        <div class="empty-state"><div class="empty-state-text">加载中...</div></div>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) closeFolderModal();
+            });
+
+            await loadFolderContent();
+        }
+
+        async function loadFolderContent() {
+            const container = document.getElementById('folderContentList');
+
+            try {
+                const res = await fetch(`${API_BASE}/user/favorites/${currentFolderId}/videos?page=${currentFolderPage}&page_size=20`);
+                const result = await res.json();
+
+                if (!result.success || !result.data) {
+                    container.innerHTML = `<div class="empty-state"><div class="empty-state-text">${result.message || '加载失败'}</div></div>`;
+                    return;
+                }
+
+                const { videos, total, page, total_pages } = result.data;
+
+                if (!videos || !videos.length) {
+                    container.innerHTML = `<div class="empty-state"><div class="empty-state-text">收藏夹为空</div></div>`;
+                    return;
+                }
+
+                container.innerHTML = `
+                    <div style="margin-bottom: 16px; font-size: 13px; color: var(--text-secondary);">共 ${total} 个视频</div>
+                    ${videos.map(v => {
+                        // 状态显示
+                        let statusHtml = '';
+                        if (v.s3_uploaded) {
+                            statusHtml = '<span style="color: var(--success); font-size: 12px;">✓ 已上传</span>';
+                        } else if (v.downloaded) {
+                            if (v.upload_failed) {
+                                statusHtml = '<span style="color: var(--danger); font-size: 12px;">✗ 上传失败</span>';
+                            } else {
+                                statusHtml = '<span style="color: var(--warning); font-size: 12px;">⏳ 已下载</span>';
+                            }
+                        }
+                        return `
+                        <div class="video-item">
+                            <img class="video-cover" src="${v.cover || 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 120 68%22><rect fill=%22%23f5f5f7%22 width=%22120%22 height=%2268%22/></svg>'}" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 120 68%22><rect fill=%22%23f5f5f7%22 width=%22120%22 height=%2268%22/></svg>'">
+                            <div class="video-info">
+                                <div class="video-title">${escapeHtml(v.title)}</div>
+                                <div class="video-meta">
+                                    <span>${v.owner || '未知'}</span>
+                                    <span>·</span>
+                                    <span>${formatDuration(v.duration || 0)}</span>
+                                    ${statusHtml ? '<span>·</span>' + statusHtml : ''}
+                                </div>
+                            </div>
+                            <button class="btn btn-text" onclick="startSingleVideoDownload('${v.bvid}')">${v.downloaded ? '重新下载' : '下载'}</button>
+                        </div>
+                    `}).join('')}
+                    ${total_pages > 1 ? `
+                        <div class="pagination">
+                            <button class="btn btn-text" ${page <= 1 ? 'disabled' : ''} onclick="changeFolderPage(-1)">上一页</button>
+                            <span>第 ${page} 页 / 共 ${total_pages} 页</span>
+                            <button class="btn btn-text" ${page >= total_pages ? 'disabled' : ''} onclick="changeFolderPage(1)">下一页</button>
+                        </div>
+                    ` : ''}
+                `;
+            } catch (e) {
+                container.innerHTML = `<div class="empty-state"><div class="empty-state-text">加载失败: ${e.message}</div></div>`;
+            }
+        }
+
+        function changeFolderPage(delta) {
+            currentFolderPage += delta;
+            loadFolderContent();
+        }
+
+        function closeFolderModal() {
+            const modal = document.getElementById('folderModal');
+            if (modal) modal.remove();
+        }
+
+        async function loadUserFavorites() {
+            try {
+                const res = await fetch(`${API_BASE}/user/favorites`);
+                const result = await res.json();
+
+                if (result.success && result.data) {
+                    renderFavoriteFolders(result.data);
+                } else {
+                    renderFavoriteFolders([]);
+                }
+            } catch (e) {
+                console.error('加载收藏夹失败:', e);
+                renderFavoriteFolders([]);
+            }
+        }
+
+        async function toggleFavoriteFolder(favId, selected) {
+            try {
+                const res = await fetch(`${API_BASE}/user/favorites/${favId}/select?selected=${selected}`, { method: 'POST' });
+                const result = await res.json();
+
+                if (result.success) {
+                    await loadUserFavorites();
+                } else {
+                    alert('操作失败：' + (result.message || '未知错误'));
+                }
+            } catch (e) {
+                alert('操作失败：' + e.message);
+            }
+        }
+
+        // 添加外部收藏夹
+        async function addExternalFavorite() {
+            const input = document.getElementById('externalFavIdInput');
+            let value = input.value.trim();
+
+            if (!value) {
+                alert('请输入收藏夹 ID 或链接');
+                return;
+            }
+
+            // 从链接中提取 ID
+            let favId = value;
+            const match = value.match(/fid=(\d+)/);
+            if (match) {
+                favId = match[1];
+            } else if (value.includes('/favlist/')) {
+                const pathMatch = value.match(/\/(\d+)(?:\/|$|\?)/);
+                if (pathMatch) {
+                    favId = pathMatch[1];
+                }
+            }
+
+            // 验证是否为数字
+            if (!/^\d+$/.test(favId)) {
+                alert('无效的收藏夹 ID，请输入数字 ID 或完整链接');
+                return;
+            }
+
+            try {
+                const res = await fetch(`${API_BASE}/user/favorites/external?fav_id=${favId}`, { method: 'POST' });
+                const result = await res.json();
+
+                if (result.success) {
+                    alert('收藏夹添加成功：' + result.data.title);
+                    input.value = '';
+                    await loadUserFavorites();
+                } else {
+                    alert('添加失败：' + (result.message || '未知错误'));
+                }
+            } catch (e) {
+                alert('添加失败：' + e.message);
+            }
+        }
+
+        // 删除收藏夹
+        async function removeFavoriteFolder(favId, event) {
+            event.stopPropagation();
+            if (!confirm('确定要从列表中移除此收藏夹吗？（不会删除 B 站上的收藏夹）')) {
+                return;
+            }
+
+            try {
+                const res = await fetch(`${API_BASE}/user/favorites/${favId}`, { method: 'DELETE' });
+                const result = await res.json();
+
+                if (result.success) {
+                    await loadUserFavorites();
+                } else {
+                    alert('移除失败：' + (result.message || '未知错误'));
+                }
+            } catch (e) {
+                alert('移除失败：' + e.message);
+            }
+        }
+
+        // 稍后观看
+        async function loadWatchLater() {
+            try {
+                const res = await fetch(`${API_BASE}/user/watch-later`);
+                const result = await res.json();
+                const container = document.getElementById('watchLaterList');
+
+                if (result.success && result.data && result.data.length) {
+                    container.innerHTML = result.data.map(v => `
+                        <div class="video-item">
+                            <img class="video-cover" src="/api/covers/${v.bvid}" onerror="this.src='${v.cover || 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 120 68%22><rect fill=%22%23f5f5f7%22 width=%22120%22 height=%2268%22/></svg>'}'">
+                            <div class="video-info">
+                                <div class="video-title">${escapeHtml(v.title)}</div>
+                                <div class="video-meta">
+                                    <span>${v.owner_name || '未知'}</span>
+                                    <span>·</span>
+                                    <span>${formatDuration(v.duration || 0)}</span>
+                                </div>
+                            </div>
+                            <div style="display: flex; gap: 8px; align-items: flex-start;">
+                                <button class="btn btn-text" onclick="startSingleVideoDownload('${v.bvid}')">下载</button>
+                            </div>
+                        </div>
+                    `).join('');
+                } else {
+                    container.innerHTML = `
+                        <div class="empty-state">
+                            <div class="empty-state-icon">⏰</div>
+                            <div class="empty-state-text">暂无稍后观看视频</div>
+                        </div>
+                    `;
+                }
+            } catch (e) {
+                console.error('加载稍后观看失败:', e);
+            }
+        }
+
+        // 观看历史
+        async function loadWatchHistory() {
+            try {
+                const res = await fetch(`${API_BASE}/user/history?page=1&page_size=100`);
+                const result = await res.json();
+                const container = document.getElementById('historyList');
+
+                if (result.success && result.data && result.data.length) {
+                    container.innerHTML = result.data.map(v => `
+                        <div class="video-item">
+                            <img class="video-cover" src="/api/covers/${v.bvid}" onerror="this.src='${v.cover || 'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 120 68%22><rect fill=%22%23f5f5f7%22 width=%22120%22 height=%2268%22/></svg>'}'">
+                            <div class="video-info">
+                                <div class="video-title">${escapeHtml(v.title)}</div>
+                                <div class="video-meta">
+                                    <span>${v.owner_name || '未知'}</span>
+                                    <span>·</span>
+                                    <span>${formatDuration(v.duration || 0)}</span>
+                                    ${v.progress ? `<span>·</span><span>已看 ${formatDuration(v.progress)}</span>` : ''}
+                                </div>
+                            </div>
+                            <div style="display: flex; gap: 8px; align-items: flex-start;">
+                                <button class="btn btn-text" onclick="startSingleVideoDownload('${v.bvid}')">下载</button>
+                            </div>
+                        </div>
+                    `).join('');
+                } else {
+                    container.innerHTML = `
+                        <div class="empty-state">
+                            <div class="empty-state-icon">📜</div>
+                            <div class="empty-state-text">暂无观看历史</div>
+                        </div>
+                    `;
+                }
+            } catch (e) {
+                console.error('加载观看历史失败:', e);
+            }
+        }
+
+        // 格式化时长
+        function formatDuration(seconds) {
+            if (!seconds || seconds <= 0) return '0:00';
+            const mins = Math.floor(seconds / 60);
+            const secs = seconds % 60;
+            if (mins >= 60) {
+                const hours = Math.floor(mins / 60);
+                const remainMins = mins % 60;
+                return `${hours}:${remainMins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+            }
+            return `${mins}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        // 登录方法
+        async function startQrLogin() {
+            try {
+                const res = await fetch(`${API_BASE}/auth/qrcode/start`, { method: 'POST' });
+                const result = await res.json();
+
+                if (!result.success) {
+                    alert('生成二维码失败：' + (result.message || '未知错误'));
+                    return;
+                }
+
+                const { session_id, image_base64 } = result.data || {};
+                if (!session_id || !image_base64) {
+                    alert('二维码数据无效');
+                    return;
+                }
+
+                currentQrSessionId = session_id;
+                document.getElementById('qrLoginImg').src = `data:image/png;base64,${image_base64}`;
+                document.getElementById('qrLoginBox').style.display = 'block';
+                document.getElementById('qrLoginStatus').textContent = '请使用哔哩哔哩 App 扫码';
+
+                if (qrPollTimer) clearInterval(qrPollTimer);
+                qrPollTimer = setInterval(pollQrLoginStatus, 2000);
+            } catch (e) {
+                alert('生成二维码失败：' + e.message);
+            }
+        }
+
+        async function pollQrLoginStatus() {
+            if (!currentQrSessionId) return;
+
+            try {
+                const res = await fetch(`${API_BASE}/auth/qrcode/poll?session_id=${encodeURIComponent(currentQrSessionId)}&auto_save_cookie=true`);
+                const result = await res.json();
+
+                if (!result.success) return;
+
+                const { status_code, status_text } = result.data || {};
+                document.getElementById('qrLoginStatus').textContent = status_text || '等待扫码...';
+
+                if (status_code === 0) {
+                    clearInterval(qrPollTimer);
+                    qrPollTimer = null;
+                    currentQrSessionId = '';
+                    await loadConfig();
+                    await loadCurrentUserData();
+                } else if (status_code === 86038) {
+                    clearInterval(qrPollTimer);
+                    qrPollTimer = null;
+                    currentQrSessionId = '';
+                    document.getElementById('qrLoginStatus').textContent = '二维码已过期，请重新生成';
+                }
+            } catch (e) {
+                console.error('轮询失败:', e);
+            }
+        }
+
+        async function startGeetest(mode) {
+            try {
+                const res = await fetch(`${API_BASE}/auth/geetest/start`, { method: 'POST' });
+                const result = await res.json();
+
+                if (!result.success) {
+                    alert('启动极验失败：' + (result.message || '未知错误'));
+                    return;
+                }
+
+                const { session_id, verify_url } = result.data || {};
+                const statusEl = document.getElementById(mode === 'sms' ? 'geetestStatusSms' : 'geetestStatusPassword');
+
+                if (mode === 'sms') {
+                    currentGeetestSessionIdSms = session_id;
+                } else {
+                    currentGeetestSessionIdPassword = session_id;
+                }
+
+                statusEl.textContent = session_id ? '已启动' : '启动失败';
+                if (verify_url) window.open(verify_url, '_blank');
+            } catch (e) {
+                alert('启动极验失败：' + e.message);
+            }
+        }
+
+        async function passwordLogin() {
+            if (!currentGeetestSessionIdPassword) {
+                alert('请先启动极验验证');
+                return;
+            }
+
+            const username = document.getElementById('pwdUsername').value.trim();
+            const password = document.getElementById('pwdPassword').value;
+
+            if (!username || !password) {
+                alert('请输入用户名和密码');
+                return;
+            }
+
+            try {
+                const res = await fetch(`${API_BASE}/auth/password/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username,
+                        password,
+                        geetest_session_id: currentGeetestSessionIdPassword
+                    })
+                });
+                const result = await res.json();
+
+                if (result.success) {
+                    await loadConfig();
+                    await loadCurrentUserData();
+                } else {
+                    alert('登录失败：' + (result.message || '未知错误'));
+                }
+            } catch (e) {
+                alert('登录失败：' + e.message);
+            }
+        }
+
+        async function sendSmsCode() {
+            if (!currentGeetestSessionIdSms) {
+                alert('请先启动极验验证');
+                return;
+            }
+
+            const phone = document.getElementById('smsPhone').value.trim();
+            const country = document.getElementById('smsCountry').value.trim() || '+86';
+
+            if (!phone) {
+                alert('请输入手机号');
+                return;
+            }
+
+            try {
+                const res = await fetch(`${API_BASE}/auth/sms/send`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        phone,
+                        country,
+                        geetest_session_id: currentGeetestSessionIdSms
+                    })
+                });
+                const result = await res.json();
+
+                if (result.success) {
+                    currentSmsCaptchaId = (result.data || {}).captcha_id || '';
+                    alert('验证码已发送');
+                } else {
+                    alert('发送失败：' + (result.message || '未知错误'));
+                }
+            } catch (e) {
+                alert('发送失败：' + e.message);
+            }
+        }
+
+        async function smsLogin() {
+            const phone = document.getElementById('smsPhone').value.trim();
+            const country = document.getElementById('smsCountry').value.trim() || '+86';
+            const code = document.getElementById('smsCode').value.trim();
+
+            if (!phone || !code || !currentSmsCaptchaId) {
+                alert('请先发送验证码并填写');
+                return;
+            }
+
+            try {
+                const res = await fetch(`${API_BASE}/auth/sms/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        phone,
+                        country,
+                        code,
+                        captcha_id: currentSmsCaptchaId
+                    })
+                });
+                const result = await res.json();
+
+                if (result.success) {
+                    await loadConfig();
+                    await loadCurrentUserData();
+                } else {
+                    alert('登录失败：' + (result.message || '未知错误'));
+                }
+            } catch (e) {
+                alert('登录失败：' + e.message);
+            }
+        }
+
+        // 工具函数
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text || '';
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>

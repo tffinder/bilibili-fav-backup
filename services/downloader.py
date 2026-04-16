@@ -1,0 +1,386 @@
+"""
+视频下载模块
+负责调用 biliup 下载视频，支持进度跟踪和重试机制
+"""
+import asyncio
+import os
+import shutil
+from pathlib import Path
+from datetime import datetime
+from typing import Optional, Tuple, Callable, Dict, Any
+from loguru import logger
+
+from core.config import get_config
+from core.database import Database, Video, DownloadProgress
+from services.bilibili_api import BilibiliAPI
+
+
+class Downloader:
+    """视频下载器"""
+    
+    def __init__(self):
+        self.config = get_config()
+        self.api = BilibiliAPI()
+        self.db: Optional[Database] = None
+        self.retry_times = self.config.download.retry_times
+        self.temp_dir = self.config.download.temp_dir
+        self.quality = self.config.download.quality
+        
+        # 进度回调函数
+        self.progress_callback: Optional[Callable[[DownloadProgress], None]] = None
+    
+    async def init_db(self) -> None:
+        """初始化数据库连接"""
+        self.db = await Database.get_instance()
+    
+    def set_progress_callback(
+        self, callback: Callable[[DownloadProgress], None]
+    ) -> None:
+        """设置进度回调函数"""
+        self.progress_callback = callback
+    
+    async def _update_progress(
+        self,
+        bvid: str,
+        title: str,
+        page: int,
+        progress: float,
+        speed: Optional[float] = None,
+        eta: Optional[int] = None,
+        status: str = "downloading",
+        message: Optional[str] = None
+    ) -> None:
+        """更新下载进度"""
+        if not self.db:
+            await self.init_db()
+        
+        now = datetime.now().isoformat()
+        
+        progress_obj = DownloadProgress(
+            id=None,
+            bvid=bvid,
+            title=title,
+            page=page,
+            progress=progress,
+            speed=speed,
+            eta=eta,
+            status=status,
+            message=message,
+            created_at=now,
+            updated_at=now
+        )
+        
+        await self.db.update_download_progress(progress_obj)
+        
+        # 调用回调函数
+        if self.progress_callback:
+            self.progress_callback(progress_obj)
+    
+    async def download_single_video(
+        self,
+        bvid: str,
+        cid: str,
+        title: str,
+        page: int = 1,
+        target_quality: int = 127
+    ) -> Tuple[bool, Optional[str], str]:
+        """
+        下载单个视频（单 P）
+        
+        Args:
+            bvid: 视频 BV 号
+            cid: 分 P ID
+            title: 视频标题
+            page: 分 P 序号
+            target_quality: 目标清晰度
+            
+        Returns:
+            (success, file_path, error_message)
+        """
+        if not self.db:
+            await self.init_db()
+        
+        # 初始化进度
+        await self._update_progress(
+            bvid=bvid,
+            title=title,
+            page=page,
+            progress=0,
+            status="pending",
+            message="准备下载..."
+        )
+        
+        # 创建临时目录（按视频分类）
+        video_temp_dir = os.path.join(self.temp_dir, bvid)
+        Path(video_temp_dir).mkdir(parents=True, exist_ok=True)
+        
+        retry_count = 0
+        last_error = ""
+        
+        while retry_count <= self.retry_times:
+            try:
+                logger.info(
+                    f"下载视频：{bvid} P{page}, 清晰度：{target_quality}, "
+                    f"尝试 {retry_count + 1}/{self.retry_times + 1}"
+                )
+                
+                # 更新状态为下载中
+                await self._update_progress(
+                    bvid=bvid,
+                    title=title,
+                    page=page,
+                    progress=10,
+                    status="downloading",
+                    message=f"正在下载 (尝试 {retry_count + 1}/{self.retry_times + 1})..."
+                )
+                
+                # 调用 biliup 下载
+                success, file_path, error = await self.api.download_video(
+                    bvid=bvid,
+                    cid=cid,
+                    output_dir=video_temp_dir,
+                    quality=target_quality,
+                    page=page
+                )
+                
+                if success and file_path:
+                    # 下载成功
+                    await self._update_progress(
+                        bvid=bvid,
+                        title=title,
+                        page=page,
+                        progress=100,
+                        status="completed",
+                        message=f"下载完成：{file_path}"
+                    )
+                    
+                    logger.info(f"视频下载成功：{file_path}")
+                    return True, file_path, ""
+                else:
+                    last_error = error or "下载失败"
+                    logger.warning(f"下载失败：{last_error}")
+                    
+            except Exception as e:
+                last_error = str(e)
+                logger.error(f"下载异常：{e}")
+            
+            # 重试前等待
+            retry_count += 1
+            if retry_count <= self.retry_times:
+                wait_time = min(2 ** retry_count, 30)  # 指数退避，最多 30 秒
+                logger.info(f"{wait_time}秒后重试...")
+                await self._update_progress(
+                    bvid=bvid,
+                    title=title,
+                    page=page,
+                    progress=0,
+                    status="pending",
+                    message=f"下载失败，{wait_time}秒后重试..."
+                )
+                await asyncio.sleep(wait_time)
+        
+        # 所有重试都失败
+        await self._update_progress(
+            bvid=bvid,
+            title=title,
+            page=page,
+            progress=0,
+            status="failed",
+            message=f"下载失败：{last_error}"
+        )
+        
+        logger.error(f"视频 {bvid} P{page} 下载失败，已重试 {self.retry_times} 次")
+        return False, None, last_error
+    
+    async def download_multi_page_video(
+        self,
+        bvid: str,
+        title: str,
+        pages: list,
+        target_quality: int = 127
+    ) -> list:
+        """
+        下载多 P 视频的所有分 P
+        
+        Args:
+            bvid: 视频 BV 号
+            title: 视频标题
+            pages: 分 P 列表 [{"cid": "...", "page": 1, "title": "..."}]
+            target_quality: 目标清晰度
+            
+        Returns:
+            下载结果列表 [(page, success, file_path, error)]
+        """
+        results = []
+        
+        logger.info(f"开始下载多 P 视频：{bvid}, 共 {len(pages)} P")
+        
+        # 单线程依次下载每个 P
+        for page_info in pages:
+            cid = page_info["cid"]
+            page_num = page_info["page"]
+            page_title = page_info.get("title", f"P{page_num}")
+            
+            # 组合完整标题
+            full_title = f"{title}_{page_title}"
+            
+            success, file_path, error = await self.download_single_video(
+                bvid=bvid,
+                cid=cid,
+                title=full_title,
+                page=page_num,
+                target_quality=target_quality
+            )
+            
+            results.append((page_num, success, file_path, error))
+            
+            # 如果下载失败，继续下一个 P
+            if not success:
+                logger.warning(f"视频 {bvid} P{page_num} 下载失败，继续下一个 P")
+        
+        return results
+    
+    async def download_and_prepare_video(
+        self,
+        bvid: str,
+        cid: str,
+        title: str,
+        page: int = 1,
+        target_quality: int = 127
+    ) -> Tuple[bool, Optional[Video], str]:
+        """
+        下载视频并准备 Video 对象
+        
+        Args:
+            bvid: 视频 BV 号
+            cid: 分 P ID
+            title: 视频标题
+            page: 分 P 序号
+            target_quality: 目标清晰度
+            
+        Returns:
+            (success, video_obj, error_message)
+        """
+        if not self.db:
+            await self.init_db()
+        
+        # 下载视频
+        success, file_path, error = await self.download_single_video(
+            bvid=bvid,
+            cid=cid,
+            title=title,
+            page=page,
+            target_quality=target_quality
+        )
+        
+        if not success or not file_path:
+            return False, None, error
+        
+        # 获取视频时长等信息
+        try:
+            # 使用 ffprobe 或文件信息获取时长
+            duration = await self._get_video_duration(file_path)
+        except Exception as e:
+            logger.warning(f"无法获取视频时长：{e}")
+            duration = 0
+        
+        # 创建 Video 对象
+        now = datetime.now().isoformat()
+        video = Video(
+            id=None,
+            bvid=bvid,
+            title=title,
+            cid=cid,
+            page=page,
+            total_pages=1,  # 单 P 下载
+            quality=target_quality,
+            duration=duration,
+            pubdate=int(datetime.now().timestamp()),
+            owner_name="",
+            s3_key=None,
+            s3_uploaded=False,
+            s3_quality=None,
+            local_path=file_path,
+            created_at=now,
+            updated_at=now
+        )
+        
+        # 保存到数据库
+        await self.db.add_video(video)
+        
+        return True, video, ""
+    
+    async def _get_video_duration(self, file_path: str) -> int:
+        """
+        获取视频时长（秒）
+        
+        尝试使用 ffprobe，如果不可用则返回 0
+        """
+        try:
+            import subprocess
+            
+            cmd = [
+                "ffprobe",
+                "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                file_path
+            ]
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            
+            if result.returncode == 0:
+                duration = float(result.stdout.strip())
+                return int(duration)
+        except Exception as e:
+            logger.debug(f"ffprobe 不可用或执行失败：{e}")
+        
+        return 0
+    
+    def cleanup_temp(self, keep_files: bool = False) -> None:
+        """
+        清理临时目录
+        
+        Args:
+            keep_files: 是否保留文件（调试用）
+        """
+        if keep_files or self.config.debug.keep_temp_files:
+            logger.info("保留临时文件（调试模式）")
+            return
+        
+        try:
+            temp_path = Path(self.temp_dir)
+            if temp_path.exists():
+                # 删除目录下所有内容
+                for item in temp_path.iterdir():
+                    if item.is_file():
+                        item.unlink()
+                    elif item.is_dir():
+                        shutil.rmtree(item)
+                
+                logger.info(f"已清理临时目录：{self.temp_dir}")
+        except Exception as e:
+            logger.error(f"清理临时目录失败：{e}")
+    
+    def cleanup_video_temp(self, bvid: str) -> None:
+        """
+        清理指定视频的临时文件
+        
+        Args:
+            bvid: 视频 BV 号
+        """
+        if self.config.debug.keep_temp_files:
+            return
+        
+        try:
+            video_temp_dir = Path(self.temp_dir) / bvid
+            if video_temp_dir.exists():
+                shutil.rmtree(video_temp_dir)
+                logger.info(f"已清理视频临时文件：{bvid}")
+        except Exception as e:
+            logger.error(f"清理临时文件失败：{e}")
