@@ -33,5 +33,18 @@ yt-dlp>=2024.12.0
 # CORS 支持
 python-multipart>=0.0.6
 
+# ==================== 开发依赖 ====================
+
+# 测试框架
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0
+
+# 代码质量
+mypy>=1.8.0
+black>=24.1.0
+isort>=5.13.0
+flake8>=7.0.0
+
 # 前端构建 (可选)
 # nodejs 和 npm 需单独安装

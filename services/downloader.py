@@ -1,13 +1,14 @@
 """
 视频下载模块
-负责调用 biliup 下载视频，支持进度跟踪和重试机制
+负责调用 biliup 下载视频，支持进度跟踪、重试机制和断点续传
 """
 import asyncio
 import os
 import shutil
+import json
 from pathlib import Path
 from datetime import datetime
-from typing import Optional, Tuple, Callable, Dict, Any
+from typing import Optional, Tuple, Callable, Dict, Any, List
 from loguru import logger
 
 from core.config import get_config
@@ -15,9 +16,61 @@ from core.database import Database, Video, DownloadProgress
 from services.bilibili_api import BilibiliAPI
 
 
+class DownloadState:
+    """下载状态持久化（用于断点续传）"""
+
+    def __init__(self, temp_dir: str):
+        self.temp_dir = Path(temp_dir)
+        self.state_file = self.temp_dir / ".download_state.json"
+
+    def save_state(self, bvid: str, page: int, state: Dict[str, Any]) -> None:
+        """保存下载状态"""
+        self.temp_dir.mkdir(parents=True, exist_ok=True)
+        states = self._load_all_states()
+        states[f"{bvid}_P{page}"] = {
+            **state,
+            "updated_at": datetime.now().isoformat()
+        }
+        with open(self.state_file, 'w', encoding='utf-8') as f:
+            json.dump(states, f, ensure_ascii=False, indent=2)
+
+    def load_state(self, bvid: str, page: int) -> Optional[Dict[str, Any]]:
+        """加载下载状态"""
+        states = self._load_all_states()
+        return states.get(f"{bvid}_P{page}")
+
+    def clear_state(self, bvid: str, page: int) -> None:
+        """清除下载状态"""
+        states = self._load_all_states()
+        key = f"{bvid}_P{page}"
+        if key in states:
+            del states[key]
+            with open(self.state_file, 'w', encoding='utf-8') as f:
+                json.dump(states, f, ensure_ascii=False, indent=2)
+
+    def _load_all_states(self) -> Dict[str, Any]:
+        """加载所有下载状态"""
+        if self.state_file.exists():
+            try:
+                with open(self.state_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except:
+                return {}
+        return {}
+
+    def get_pending_downloads(self) -> List[Dict[str, Any]]:
+        """获取所有待续传的下载"""
+        states = self._load_all_states()
+        pending = []
+        for key, state in states.items():
+            if state.get("status") == "partial":
+                pending.append(state)
+        return pending
+
+
 class Downloader:
     """视频下载器"""
-    
+
     def __init__(self):
         self.config = get_config()
         self.api = BilibiliAPI()
@@ -25,9 +78,12 @@ class Downloader:
         self.retry_times = self.config.download.retry_times
         self.temp_dir = self.config.download.temp_dir
         self.quality = self.config.download.quality
-        
+
         # 进度回调函数
         self.progress_callback: Optional[Callable[[DownloadProgress], None]] = None
+
+        # 断点续传状态管理
+        self.download_state = DownloadState(self.temp_dir)
     
     async def init_db(self) -> None:
         """初始化数据库连接"""
@@ -82,24 +138,45 @@ class Downloader:
         cid: str,
         title: str,
         page: int = 1,
-        target_quality: int = 127
+        target_quality: int = 127,
+        resume: bool = True
     ) -> Tuple[bool, Optional[str], str]:
         """
-        下载单个视频（单 P）
-        
+        下载单个视频（单 P），支持断点续传
+
         Args:
             bvid: 视频 BV 号
             cid: 分 P ID
             title: 视频标题
             page: 分 P 序号
             target_quality: 目标清晰度
-            
+            resume: 是否尝试断点续传
+
         Returns:
             (success, file_path, error_message)
         """
         if not self.db:
             await self.init_db()
-        
+
+        # 创建临时目录（按视频分类）
+        video_temp_dir = os.path.join(self.temp_dir, bvid)
+        Path(video_temp_dir).mkdir(parents=True, exist_ok=True)
+
+        # 检查是否有断点续传
+        partial_file = None
+        if resume:
+            state = self.download_state.load_state(bvid, page)
+            if state and state.get("status") == "partial":
+                partial_file = state.get("partial_file")
+                if partial_file and Path(partial_file).exists():
+                    logger.info(f"发现断点续传文件：{partial_file}")
+                    # 检查文件大小是否合理
+                    file_size = Path(partial_file).stat().st_size
+                    if file_size > 1024 * 1024:  # 至少 1MB
+                        logger.info(f"从断点继续下载，已有 {file_size / 1024 / 1024:.1f}MB")
+                    else:
+                        partial_file = None
+
         # 初始化进度
         await self._update_progress(
             bvid=bvid,
@@ -109,21 +186,17 @@ class Downloader:
             status="pending",
             message="准备下载..."
         )
-        
-        # 创建临时目录（按视频分类）
-        video_temp_dir = os.path.join(self.temp_dir, bvid)
-        Path(video_temp_dir).mkdir(parents=True, exist_ok=True)
-        
+
         retry_count = 0
         last_error = ""
-        
+
         while retry_count <= self.retry_times:
             try:
                 logger.info(
                     f"下载视频：{bvid} P{page}, 清晰度：{target_quality}, "
                     f"尝试 {retry_count + 1}/{self.retry_times + 1}"
                 )
-                
+
                 # 更新状态为下载中
                 await self._update_progress(
                     bvid=bvid,
@@ -133,8 +206,20 @@ class Downloader:
                     status="downloading",
                     message=f"正在下载 (尝试 {retry_count + 1}/{self.retry_times + 1})..."
                 )
-                
-                # 调用 biliup 下载
+
+                # 保存下载状态（用于断点续传）
+                self.download_state.save_state(bvid, page, {
+                    "bvid": bvid,
+                    "cid": cid,
+                    "title": title,
+                    "page": page,
+                    "target_quality": target_quality,
+                    "temp_dir": video_temp_dir,
+                    "status": "partial",
+                    "partial_file": None
+                })
+
+                # 调用下载
                 success, file_path, error = await self.api.download_video(
                     bvid=bvid,
                     cid=cid,
@@ -142,9 +227,11 @@ class Downloader:
                     quality=target_quality,
                     page=page
                 )
-                
+
                 if success and file_path:
-                    # 下载成功
+                    # 下载成功，清除断点状态
+                    self.download_state.clear_state(bvid, page)
+
                     await self._update_progress(
                         bvid=bvid,
                         title=title,
@@ -153,17 +240,42 @@ class Downloader:
                         status="completed",
                         message=f"下载完成：{file_path}"
                     )
-                    
+
                     logger.info(f"视频下载成功：{file_path}")
                     return True, file_path, ""
                 else:
                     last_error = error or "下载失败"
                     logger.warning(f"下载失败：{last_error}")
-                    
+
+                    # 保存部分下载状态
+                    self.download_state.save_state(bvid, page, {
+                        "bvid": bvid,
+                        "cid": cid,
+                        "title": title,
+                        "page": page,
+                        "target_quality": target_quality,
+                        "temp_dir": video_temp_dir,
+                        "status": "partial",
+                        "partial_file": None,
+                        "error": last_error
+                    })
+
             except Exception as e:
                 last_error = str(e)
                 logger.error(f"下载异常：{e}")
-            
+
+                # 保存异常状态
+                self.download_state.save_state(bvid, page, {
+                    "bvid": bvid,
+                    "cid": cid,
+                    "title": title,
+                    "page": page,
+                    "target_quality": target_quality,
+                    "temp_dir": video_temp_dir,
+                    "status": "partial",
+                    "error": last_error
+                })
+
             # 重试前等待
             retry_count += 1
             if retry_count <= self.retry_times:
@@ -178,7 +290,7 @@ class Downloader:
                     message=f"下载失败，{wait_time}秒后重试..."
                 )
                 await asyncio.sleep(wait_time)
-        
+
         # 所有重试都失败
         await self._update_progress(
             bvid=bvid,
@@ -188,7 +300,7 @@ class Downloader:
             status="failed",
             message=f"下载失败：{last_error}"
         )
-        
+
         logger.error(f"视频 {bvid} P{page} 下载失败，已重试 {self.retry_times} 次")
         return False, None, last_error
     

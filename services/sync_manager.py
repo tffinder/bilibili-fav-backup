@@ -46,6 +46,57 @@ class SyncManager:
             "current_video": ""
         }
 
+        # 增量同步：记录上次同步时间
+        self.last_sync_time: Optional[datetime] = None
+
+    async def get_last_sync_time(self, fav_id: str) -> Optional[datetime]:
+        """获取指定收藏夹上次成功同步的时间"""
+        if not self.db:
+            await self.init_db()
+
+        history = await self.db.get_recent_sync_history(limit=10)
+        for h in history:
+            if h.fav_id == fav_id and h.status == "completed":
+                try:
+                    return datetime.fromisoformat(h.end_time)
+                except:
+                    pass
+        return None
+
+    def filter_new_videos(
+        self,
+        videos: List[Dict[str, Any]],
+        last_sync_time: Optional[datetime]
+    ) -> List[Dict[str, Any]]:
+        """
+        过滤出新增的视频（增量同步）
+
+        Args:
+            videos: 视频列表
+            last_sync_time: 上次同步时间
+
+        Returns:
+            新增视频列表
+        """
+        if not last_sync_time:
+            return videos
+
+        new_videos = []
+        for video in videos:
+            fav_time = video.get("fav_time", 0)
+            if fav_time:
+                try:
+                    video_time = datetime.fromtimestamp(fav_time)
+                    if video_time > last_sync_time:
+                        new_videos.append(video)
+                except:
+                    new_videos.append(video)
+            else:
+                # 没有收藏时间，保守处理
+                new_videos.append(video)
+
+        return new_videos
+
     async def init_db(self) -> None:
         """初始化数据库连接"""
         self.db = await Database.get_instance()
@@ -238,13 +289,23 @@ class SyncManager:
             if videos_list and "fav_title" in videos_list[0]:
                 fav_title = videos_list[0].get("fav_title")
 
+        # 增量同步：过滤新增视频
+        last_sync_time = await self.get_last_sync_time(fav_id)
+        if last_sync_time:
+            original_count = len(videos_list)
+            videos_list = self.filter_new_videos(videos_list, last_sync_time)
+            logger.info(
+                f"增量同步：发现 {len(videos_list)} 个新视频 "
+                f"(共 {original_count} 个视频)"
+            )
+
         # 2. 遍历每个视频
         new_count = 0
         updated_count = 0
         skipped_count = 0
         failed_count = 0
 
-        self.sync_progress["total"] += total_videos
+        self.sync_progress["total"] += len(videos_list)
 
         for idx, video_info in enumerate(videos_list):
             bvid = video_info["bvid"]
@@ -255,7 +316,7 @@ class SyncManager:
             self.sync_progress["current_video"] = title
 
             logger.info(
-                f"[收藏夹 {fav_id}] [{idx + 1}/{total_videos}] 处理视频：{title} ({bvid})"
+                f"[收藏夹 {fav_id}] [{idx + 1}/{len(videos_list)}] 处理视频：{title} ({bvid})"
             )
 
             try:
