@@ -10,7 +10,6 @@ from typing import Optional, Dict, Any
 @dataclass
 class Video:
     """视频数据模型"""
-    id: Optional[int]  # 自增 ID
     bvid: str  # B 站视频 ID
     title: str  # 标题
     cid: str  # 分 P ID
@@ -26,11 +25,25 @@ class Video:
     local_path: Optional[str]  # 本地路径
     created_at: str  # 创建时间
     updated_at: str  # 更新时间
+    id: Optional[int] = None  # 自增 ID
     max_quality: Optional[int] = None  # 视频最高可用分辨率
     upload_failed: bool = False  # 上传是否失败
     fav_id: Optional[int] = None  # 收藏夹 ID
     fav_title: Optional[str] = None  # 收藏夹名称
     fav_time: Optional[int] = None  # 收藏时间戳
+    up_mid: Optional[int] = None  # UP 主 UID（UP 主同步来源）
+    up_name: Optional[str] = None  # UP 主名称
+    source_available: bool = True  # B 站源视频是否仍可访问
+    source_status: str = "unknown"  # unknown, available, deleted, check_failed
+    source_checked_at: Optional[str] = None  # 最近检测时间
+    source_deleted_at: Optional[str] = None  # 首次发现失效时间
+    source_error: Optional[str] = None  # 最近检测错误
+
+    def __post_init__(self) -> None:
+        """Normalize SQLite integer flags to booleans."""
+        self.s3_uploaded = bool(self.s3_uploaded)
+        self.upload_failed = bool(self.upload_failed)
+        self.source_available = bool(self.source_available)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'Video':

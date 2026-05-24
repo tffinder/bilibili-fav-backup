@@ -16,6 +16,7 @@ project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
 from core.config import load_config, get_config, ConfigManager
+from core.logger import setup_logging, LoggerManager
 from core.database import Database
 from services.bilibili_api import BilibiliAPI
 from services.sync_manager import SyncManager
@@ -24,33 +25,53 @@ from api.routes import router, init_services
 
 
 # 配置日志
-def setup_logging():
-    """配置日志输出"""
+def setup_logging_from_config():
+    """从配置文件配置日志输出"""
     log_dir = project_root / "logs"
     log_dir.mkdir(exist_ok=True)
-    
+
+    # 加载配置以获取日志级别
+    try:
+        config = get_config()
+        log_level = config.logging.level.upper()
+        console_enabled = config.logging.console_enabled
+        file_enabled = config.logging.file_enabled
+        rotation = config.logging.rotation
+        retention = config.logging.retention
+        compression = config.logging.compression
+    except RuntimeError:
+        # 配置未加载时使用默认值
+        log_level = "INFO"
+        console_enabled = True
+        file_enabled = True
+        rotation = "00:00"
+        retention = "7 days"
+        compression = "zip"
+
     # 移除默认处理器
     logger.remove()
-    
+
     # 控制台输出
-    logger.add(
-        sys.stderr,
-        level="DEBUG",
-        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
-        colorize=True
-    )
-    
+    if console_enabled:
+        logger.add(
+            sys.stderr,
+            level=log_level,
+            format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
+            colorize=True
+        )
+
     # 文件输出
-    logger.add(
-        str(log_dir / "app_{time:YYYY-MM-DD}.log"),
-        level="DEBUG",
-        rotation="00:00",
-        retention="7 days",
-        compression="zip",
-        format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}"
-    )
-    
-    logger.info("日志系统初始化完成")
+    if file_enabled:
+        logger.add(
+            str(log_dir / "app_{time:YYYY-MM-DD}.log"),
+            level=log_level,
+            rotation=rotation,
+            retention=retention,
+            compression=compression,
+            format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}"
+        )
+
+    logger.info(f"日志系统初始化完成 [级别: {log_level}]")
 
 
 @asynccontextmanager
@@ -58,46 +79,51 @@ async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     # 启动时执行
     logger.info("正在启动应用...")
-    
+
+    # 初始化变量（确保 finally 块安全执行）
+    db = None
+    scheduler = None
+
     try:
         # 加载配置
         config = load_config()
         logger.info("配置加载完成")
-        
+
         # 初始化数据库
         db = await Database.get_instance()
         logger.info("数据库初始化完成")
-        
+
         # 初始化服务
         sync_manager = SyncManager()
         scheduler = create_scheduler(sync_manager)
-        
+
         # 注入服务到 API
         init_services(sync_manager, scheduler)
         logger.info("服务初始化完成")
-        
+
         # 启动定时任务
         if config.scheduler.enabled:
             scheduler.start()
             logger.info("定时任务已启动")
-        
+
         yield
-        
+
     except Exception as e:
         logger.error(f"启动失败：{e}")
         raise
-    
+
     finally:
         # 关闭时执行
         logger.info("正在关闭应用...")
-        
+
         # 停止调度器
-        if 'scheduler' in locals():
+        if scheduler is not None:
             scheduler.stop()
-        
+
         # 关闭数据库
-        await db.close()
-        
+        if db is not None:
+            await db.close()
+
         logger.info("应用已关闭")
 
 
@@ -129,10 +155,10 @@ frontend_dir = project_root / "frontend"
 async def root():
     """根路径，返回前端页面"""
     index_file = frontend_dir / "index.html"
-    
+
     if index_file.exists():
         return FileResponse(str(index_file))
-    
+
     return {
         "message": "B 站收藏夹备份系统 API",
         "docs": "/docs",
@@ -150,17 +176,18 @@ def create_scheduler(sync_manager: SyncManager) -> TaskScheduler:
 def main():
     """主函数"""
     import uvicorn
-    
-    # 设置日志
-    setup_logging()
-    
+
+    # 加载配置
+    config = load_config()
+
+    # 设置日志（使用配置中的日志级别）
+    setup_logging_from_config()
+
     logger.info("=" * 50)
     logger.info("B 站收藏夹备份系统 v1.0.0")
+    logger.info(f"日志级别: {config.logging.level}")
     logger.info("=" * 50)
-    
-    # 加载配置，不存在时自动生成默认配置文件，便于通过网页初始化
-    load_config()
-    
+
     # 启动服务器
     uvicorn.run(
         app,

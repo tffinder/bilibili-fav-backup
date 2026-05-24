@@ -90,18 +90,35 @@ notification:
   email_to: ""
   email_password: ""
 
+# 日志配置
+logging:
+  # 日志级别：TRACE, DEBUG, INFO, SUCCESS, WARNING, ERROR, CRITICAL
+  level: "INFO"
+
+  # 是否启用控制台输出
+  console_enabled: true
+
+  # 是否启用文件输出
+  file_enabled: true
+
+  # 日志文件轮转时间
+  rotation: "00:00"
+
+  # 日志保留时间
+  retention: "7 days"
+
+  # 日志压缩格式
+  compression: "zip"
+
 # 调试配置
 debug:
-  # 调试模式 (true 输出详细日志)
+  # 调试模式 (true 输出详细日志，等同于 logging.level: DEBUG)
   enabled: false
-
-  # 日志级别：DEBUG, INFO, WARNING, ERROR
-  log_level: "INFO"
 
   # 是否保留下载的临时文件 (调试用)
   keep_temp_files: false
 
-  # biliup 代理设置 (可选)
+  # yt-dlp 代理设置 (可选，保留旧字段名以兼容已有配置)
   biliup_proxy: null
 
   # ffmpeg 可执行文件路径 (可选，用于合并音视频)

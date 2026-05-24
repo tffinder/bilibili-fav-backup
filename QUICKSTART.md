@@ -12,14 +12,12 @@
    或手动安装：
    ```cmd
    pip install -r requirements.txt
-   pip install biliup
    ```
 
 ### Linux/Mac 用户
 
 ```bash
 pip install -r requirements.txt
-pip install biliup
 ```
 
 ## 二、获取必要信息
@@ -255,7 +253,7 @@ scheduler:
 
 ```yaml
 debug:
-  biliup_proxy: "http://127.0.0.1:7890"  # 代理地址
+  biliup_proxy: "http://127.0.0.1:7890"  # yt-dlp 代理地址（兼容旧配置名）
 ```
 
 ## 十、API 快速参考

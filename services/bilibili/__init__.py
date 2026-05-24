@@ -8,6 +8,7 @@ from services.bilibili.auth import AuthAPI
 from services.bilibili.favorite import FavoriteAPI
 from services.bilibili.video import VideoAPI
 from services.bilibili.user import UserAPI
+from services.bilibili.uploader import UploaderAPI
 
 # 为向后兼容，导出原有的 BilibiliAPI 类
 from services.bilibili.legacy import BilibiliAPI
@@ -18,5 +19,6 @@ __all__ = [
     "FavoriteAPI",
     "VideoAPI",
     "UserAPI",
+    "UploaderAPI",
     "BilibiliAPI"
 ]

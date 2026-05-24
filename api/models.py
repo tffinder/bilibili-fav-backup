@@ -41,6 +41,12 @@ class ConfigModel(BaseModel):
     debug_keep_temp_files: bool = False
     debug_biliup_proxy: Optional[str] = None
     debug_ffmpeg_path: Optional[str] = None
+    skip_max_single_duration: int = 0
+    skip_max_total_duration: int = 0
+    skip_interactive: bool = False
+    skip_max_video_size_gib: float = 0
+    up_sync_enabled: bool = False
+    up_sync_cron: str = "0 3 * * *"
 
 
 class ConfigUpdateRequest(BaseModel):
@@ -78,6 +84,12 @@ class ConfigUpdateRequest(BaseModel):
     debug_keep_temp_files: Optional[bool] = None
     debug_biliup_proxy: Optional[str] = None
     debug_ffmpeg_path: Optional[str] = None
+    skip_max_single_duration: Optional[int] = None
+    skip_max_total_duration: Optional[int] = None
+    skip_interactive: Optional[bool] = None
+    skip_max_video_size_gib: Optional[float] = None
+    up_sync_enabled: Optional[bool] = None
+    up_sync_cron: Optional[str] = None
 
 
 class SingleVideoDownloadRequest(BaseModel):
@@ -123,6 +135,14 @@ class VideoModel(BaseModel):
     # 新增字段
     max_quality: Optional[int] = None  # 视频最高可用分辨率
     upload_failed: Optional[bool] = False  # 上传是否失败
+    source_available: bool = True
+    source_status: str = "unknown"
+    source_checked_at: Optional[str] = None
+    source_deleted_at: Optional[str] = None
+    source_error: Optional[str] = None
+    s3_key: Optional[str] = None
+    download_url: Optional[str] = None
+    remote_download_url: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -178,12 +198,16 @@ class StatusResponse(BaseModel):
     """状态响应"""
     is_syncing: bool
     total_videos: int
+    downloaded_videos: int = 0
     uploaded_videos: int
     pending_videos: int
+    failed_videos: int = 0
     last_sync: Optional[dict]
     scheduler_enabled: bool
     next_run_time: Optional[str]
+    cookie_configured: bool = False
     cookie_valid: bool
+    s3_enabled: bool = False
     s3_connected: bool
 
 

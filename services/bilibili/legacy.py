@@ -11,10 +11,11 @@ from services.bilibili.auth import AuthAPI
 from services.bilibili.favorite import FavoriteAPI
 from services.bilibili.video import VideoAPI
 from services.bilibili.user import UserAPI
+from services.bilibili.uploader import UploaderAPI
 from core.db.models import Video as DbVideo
 
 
-class BilibiliAPI(AuthAPI, FavoriteAPI, VideoAPI, UserAPI):
+class BilibiliAPI(AuthAPI, FavoriteAPI, VideoAPI, UserAPI, UploaderAPI):
     """
     Bilibili API 封装
 

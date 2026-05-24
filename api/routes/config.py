@@ -54,7 +54,13 @@ async def get_config_info():
             debug_log_level=config.debug.log_level,
             debug_keep_temp_files=config.debug.keep_temp_files,
             debug_biliup_proxy=config.debug.biliup_proxy,
-            debug_ffmpeg_path=config.debug.ffmpeg_path
+            debug_ffmpeg_path=config.debug.ffmpeg_path,
+            skip_max_single_duration=config.skip_rules.max_single_duration,
+            skip_max_total_duration=config.skip_rules.max_total_duration,
+            skip_interactive=config.skip_rules.skip_interactive,
+            skip_max_video_size_gib=config.skip_rules.max_video_size_gib,
+            up_sync_enabled=config.up_sync.enabled,
+            up_sync_cron=config.up_sync.cron
         )
 
     except Exception as e:
@@ -97,6 +103,12 @@ CONFIG_FIELD_MAPPING = {
     'debug_keep_temp_files': ('debug', 'keep_temp_files'),
     'debug_biliup_proxy': ('debug', 'biliup_proxy'),
     'debug_ffmpeg_path': ('debug', 'ffmpeg_path'),
+    'skip_max_single_duration': ('skip_rules', 'max_single_duration'),
+    'skip_max_total_duration': ('skip_rules', 'max_total_duration'),
+    'skip_interactive': ('skip_rules', 'skip_interactive'),
+    'skip_max_video_size_gib': ('skip_rules', 'max_video_size_gib'),
+    'up_sync_enabled': ('up_sync', 'enabled'),
+    'up_sync_cron': ('up_sync', 'cron'),
 }
 
 

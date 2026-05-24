@@ -46,6 +46,14 @@ class SchedulerConfig(BaseModel):
     timezone: str = "Asia/Shanghai"
 
 
+class DataRefreshConfig(BaseModel):
+    """数据刷新配置"""
+    watch_later_enabled: bool = True
+    watch_later_cron: str = "0 * * * *"  # 每小时
+    history_enabled: bool = True
+    history_cron: str = "0 * * * *"  # 每小时
+
+
 class NotificationConfig(BaseModel):
     """通知配置"""
     web_enabled: bool = True
@@ -57,13 +65,47 @@ class NotificationConfig(BaseModel):
     email_password: str = ""
 
 
+class LoggingConfig(BaseModel):
+    """日志配置"""
+    level: str = "INFO"
+    console_enabled: bool = True
+    file_enabled: bool = True
+    rotation: str = "00:00"
+    retention: str = "7 days"
+    compression: str = "zip"
+
+
 class DebugConfig(BaseModel):
     """调试配置"""
     enabled: bool = False
-    log_level: str = "INFO"
     keep_temp_files: bool = False
     biliup_proxy: Optional[str] = None
     ffmpeg_path: Optional[str] = None  # ffmpeg 可执行文件路径
+
+    # 已废弃：请使用 logging.level，为保持向后兼容保留
+    log_level: Optional[str] = None
+
+
+class SkipRulesConfig(BaseModel):
+    """同步跳过规则。0 表示不限制。"""
+    max_single_duration: int = 0  # 单 P 时长上限（秒），超过则跳过整个视频
+    max_total_duration: int = 0   # 多 P 合计时长上限（秒）
+    skip_interactive: bool = False  # 跳过互动视频（如《Steins;Gate》互动剧）
+    max_video_size_gib: float = 0  # 单个视频文件大小上限（GiB），0 = 不限制
+
+
+class UpSyncTarget(BaseModel):
+    """单个 UP 主同步目标"""
+    mid: int
+    name: str = ""
+    enabled: bool = True
+
+
+class UpSyncConfig(BaseModel):
+    """UP 主视频同步配置"""
+    enabled: bool = False
+    targets: list[UpSyncTarget] = Field(default_factory=list)
+    cron: str = "0 3 * * *"
 
 
 class Config(BaseModel):
@@ -72,8 +114,12 @@ class Config(BaseModel):
     download: DownloadConfig = Field(default_factory=DownloadConfig)
     s3: S3Config = Field(default_factory=S3Config)
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
+    data_refresh: DataRefreshConfig = Field(default_factory=DataRefreshConfig)
     notification: NotificationConfig = Field(default_factory=NotificationConfig)
+    logging: LoggingConfig = Field(default_factory=LoggingConfig)
     debug: DebugConfig = Field(default_factory=DebugConfig)
+    skip_rules: SkipRulesConfig = Field(default_factory=SkipRulesConfig)
+    up_sync: UpSyncConfig = Field(default_factory=UpSyncConfig)
     
     # 项目根目录
     base_dir: Path = Field(default_factory=lambda: Path(__file__).parent.parent)
@@ -153,9 +199,17 @@ class ConfigManager:
             download=DownloadConfig(**config_data.get('download', {})),
             s3=S3Config(**config_data.get('s3', {})),
             scheduler=SchedulerConfig(**config_data.get('scheduler', {})),
+            data_refresh=DataRefreshConfig(**config_data.get('data_refresh', {})),
             notification=NotificationConfig(**config_data.get('notification', {})),
-            debug=DebugConfig(**config_data.get('debug', {}))
+            logging=LoggingConfig(**config_data.get('logging', {})),
+            debug=DebugConfig(**config_data.get('debug', {})),
+            skip_rules=SkipRulesConfig(**config_data.get('skip_rules', {})),
+            up_sync=UpSyncConfig(**config_data.get('up_sync', {}))
         )
+
+        # 向后兼容：如果 debug.log_level 存在但 logging.level 不存在，使用 debug.log_level
+        if self._config.debug.log_level and config_data.get('logging', {}).get('level') is None:
+            self._config.logging.level = self._config.debug.log_level
         
         # 处理相对路径
         if not self._config.download.temp_dir.startswith('.'):
@@ -198,8 +252,12 @@ class ConfigManager:
             'download': self._config.download.model_dump(),
             's3': self._config.s3.model_dump(),
             'scheduler': self._config.scheduler.model_dump(),
+            'data_refresh': self._config.data_refresh.model_dump(),
             'notification': self._config.notification.model_dump(),
-            'debug': self._config.debug.model_dump()
+            'logging': self._config.logging.model_dump(),
+            'debug': self._config.debug.model_dump(),
+            'skip_rules': self._config.skip_rules.model_dump(),
+            'up_sync': self._config.up_sync.model_dump()
         }
         
         # 写回文件

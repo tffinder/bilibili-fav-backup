@@ -3,6 +3,7 @@ Bilibili 视频 API
 
 提供视频信息获取、视频下载等功能
 """
+import asyncio
 import os
 import re
 import shutil
@@ -46,13 +47,20 @@ class VideoAPI(BilibiliClient):
             video_obj = Video(bvid=bvid, credential=credential)
             info = await video_obj.get_info()
             owner = info.get("owner") or {}
+            rights = info.get("rights") or {}
+            is_interactive = bool(
+                rights.get("is_stein_gate")
+                or info.get("is_stein_gate")
+                or info.get("interaction")
+            )
             return True, {
                 "bvid": bvid,
                 "title": info.get("title") or bvid,
                 "pubdate": info.get("pubdate") or 0,
                 "owner_name": owner.get("name") or "",
                 "desc": info.get("desc") or "",
-                "cover_url": info.get("pic") or info.get("cover") or info.get("thumbnail") or ""
+                "cover_url": info.get("pic") or info.get("cover") or info.get("thumbnail") or "",
+                "is_interactive": is_interactive
             }, ""
         except Exception as e:
             logger.error(f"获取视频信息失败：{e}")
@@ -271,16 +279,24 @@ class VideoAPI(BilibiliClient):
         if self.config.debug.biliup_proxy:
             args.extend(["--proxy", self.config.debug.biliup_proxy])
 
+        max_size_gib = self.config.skip_rules.max_video_size_gib
+        if max_size_gib > 0:
+            max_size_bytes = int(max_size_gib * 1024 * 1024 * 1024)
+            args.extend(["--max-filesize", str(max_size_bytes)])
+
         logger.info(f"yt-dlp 命令：{' '.join(args)}")
-        success, stdout, stderr = self._run_command(args)
+        success, stdout, stderr = await self._run_command(args)
 
         if not success:
+            combined = (stdout or "") + (stderr or "")
+            if "File is larger than max-filesize" in combined:
+                self._cleanup_temp_dir(temp_download_dir)
+                return False, "", f"文件大小超过限制 ({max_size_gib} GiB)"
             logger.error(f"yt-dlp 下载失败：{stderr}")
             # 尝试备用格式
             logger.info("尝试备用格式下载...")
-            backup_args = args.copy()
-            backup_args[6] = "bestvideo+bestaudio/best"
-            success, stdout, stderr = self._run_command(backup_args)
+            backup_args = self._replace_format_selector(args, "bestvideo+bestaudio/best")
+            success, stdout, stderr = await self._run_command(backup_args)
             if not success:
                 self._cleanup_temp_dir(temp_download_dir)
                 return False, "", stderr or "下载失败"
@@ -292,7 +308,7 @@ class VideoAPI(BilibiliClient):
 
         final_file = None
 
-        if merged_file and self._check_audio_track(merged_file):
+        if merged_file and await self._check_audio_track(merged_file):
             final_file = merged_file
             logger.info(f"yt-dlp 已自动合并：{merged_file}")
         elif video_file and audio_file:
@@ -303,7 +319,7 @@ class VideoAPI(BilibiliClient):
                 video_name = video_name.split(".f")[0]
             final_file = str(Path(output_dir) / f"{video_name}.mp4")
 
-            merge_success, merge_error = self._merge_video_audio(
+            merge_success, merge_error = await self._merge_video_audio(
                 video_file, audio_file, final_file, ffmpeg_exe
             )
             if not merge_success:
@@ -327,15 +343,20 @@ class VideoAPI(BilibiliClient):
 
         # 验证最终文件
         if final_file and Path(final_file).exists():
-            has_audio = self._check_audio_track(final_file)
+            has_audio = await self._check_audio_track(final_file)
             if not has_audio:
                 logger.warning(f"视频文件没有音频轨道：{final_file}")
             return True, final_file, ""
 
         return False, "", "下载完成但未找到文件"
 
-    def _run_command(self, args: List[str]) -> Tuple[bool, str, str]:
+    async def _run_command(self, args: List[str]) -> Tuple[bool, str, str]:
         """运行命令"""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._run_command_sync, args)
+
+    def _run_command_sync(self, args: List[str]) -> Tuple[bool, str, str]:
+        """在线程中运行阻塞命令"""
         try:
             logger.debug(f"运行命令：{' '.join(args)}")
             result = subprocess.run(
@@ -352,23 +373,58 @@ class VideoAPI(BilibiliClient):
         except Exception as e:
             return False, "", str(e)
 
-    def _merge_video_audio(
+    @staticmethod
+    def _replace_format_selector(args: List[str], selector: str) -> List[str]:
+        """替换 yt-dlp 的 --format 参数值。"""
+        updated_args = args.copy()
+        try:
+            format_index = updated_args.index("--format")
+            updated_args[format_index + 1] = selector
+        except (ValueError, IndexError):
+            updated_args.extend(["--format", selector])
+        return updated_args
+
+    async def _merge_video_audio(
         self, video_file: str, audio_file: str, output_file: str, ffmpeg_exe: str
     ) -> Tuple[bool, str]:
         """使用 ffmpeg 合并视频和音频"""
-        try:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None,
+            self._merge_video_audio_sync,
+            video_file,
+            audio_file,
+            output_file,
+            ffmpeg_exe,
+        )
+
+    def _merge_video_audio_sync(
+        self, video_file: str, audio_file: str, output_file: str, ffmpeg_exe: str
+    ) -> Tuple[bool, str]:
+        """在线程中使用 ffmpeg 合并视频和音频"""
+        def _run(audio_codec: str) -> subprocess.CompletedProcess:
             cmd = [
                 ffmpeg_exe,
                 "-i", video_file,
                 "-i", audio_file,
                 "-c:v", "copy",
-                "-c:a", "aac",
+                "-c:a", audio_codec,
                 "-y",
-                output_file
+                output_file,
             ]
-
             logger.info(f"ffmpeg 合并命令：{' '.join(cmd)}")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            return subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+
+        try:
+            # B 站音频通常是 AAC m4a，直接 copy 进 MP4 容器即可，秒级完成
+            result = _run("copy")
+
+            if result.returncode != 0:
+                # 极少数 opus / 不兼容情况回退到 AAC 重编码
+                logger.warning(
+                    f"ffmpeg copy 合并失败，回退到 AAC 重编码：{result.stderr.strip()[:200]}"
+                )
+                result = _run("aac")
 
             if result.returncode != 0:
                 logger.error(f"ffmpeg 合并失败：{result.stderr}")
@@ -377,7 +433,7 @@ class VideoAPI(BilibiliClient):
             logger.info(f"合并成功：{output_file}")
             return True, ""
         except subprocess.TimeoutExpired:
-            return False, "合并超时"
+            return False, "合并超时（已放宽至 30 分钟，仍超时请检查 ffmpeg 或磁盘）"
         except Exception as e:
             return False, str(e)
 
@@ -391,8 +447,13 @@ class VideoAPI(BilibiliClient):
         except Exception as e:
             logger.warning(f"清理临时目录失败：{e}")
 
-    def _check_audio_track(self, file_path: str) -> bool:
+    async def _check_audio_track(self, file_path: str) -> bool:
         """检查视频文件是否有音频轨道"""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._check_audio_track_sync, file_path)
+
+    def _check_audio_track_sync(self, file_path: str) -> bool:
+        """在线程中检查视频文件是否有音频轨道"""
         try:
             ffmpeg_path = self.config.debug.ffmpeg_path
             if ffmpeg_path:
@@ -462,8 +523,9 @@ class VideoAPI(BilibiliClient):
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
             }
 
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers, timeout=30) as resp:
+            timeout = aiohttp.ClientTimeout(total=8, connect=3, sock_connect=3, sock_read=5)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url, headers=headers) as resp:
                     if resp.status == 200:
                         content = await resp.read()
                         Path(save_path).parent.mkdir(parents=True, exist_ok=True)

@@ -93,10 +93,19 @@ class UserAPI(BilibiliClient):
 
         await self.rate_limit()
         try:
+            # 使用正确的参数调用 API
             data = await user.get_self_history_new(
                 credential=credential,
+                _type=user.HistoryType.ALL,
                 ps=page_size
             )
+
+            # 检查 API 返回状态
+            if data.get("code", 0) != 0:
+                error_msg = data.get("message", "未知错误")
+                logger.error(f"获取观看历史失败：接口返回错误代码：{data.get('code')}，信息：{error_msg}")
+                return False, [], f"B站API错误：{error_msg}"
+
             videos: List[Dict[str, Any]] = []
             for item in data.get("list", {}).get("list", []):
                 history = item.get("history", {})

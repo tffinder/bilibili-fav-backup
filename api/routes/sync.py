@@ -4,7 +4,8 @@
 提供同步启动、进度查询、历史记录等接口
 """
 import asyncio
-from typing import Optional, List
+import time
+from typing import Optional, List, Tuple
 
 from fastapi import APIRouter, HTTPException
 from loguru import logger
@@ -22,6 +23,9 @@ router = APIRouter(tags=["同步控制"])
 # 全局服务实例（由 main.py 注入）
 _sync_manager: Optional[SyncManager] = None
 _scheduler: Optional[TaskScheduler] = None
+_cookie_status_cache: Tuple[float, bool] = (0.0, False)
+_s3_status_cache: Tuple[float, bool] = (0.0, False)
+_STATUS_CHECK_TTL_SECONDS = 60.0
 
 
 def init_services(sync_manager: SyncManager, scheduler: TaskScheduler) -> None:
@@ -34,6 +38,8 @@ def init_services(sync_manager: SyncManager, scheduler: TaskScheduler) -> None:
 @router.get("/status", response_model=StatusResponse)
 async def get_status():
     """获取系统状态"""
+    global _cookie_status_cache, _s3_status_cache
+
     try:
         from services.bilibili_api import BilibiliAPI
         from services.s3_uploader import S3Uploader
@@ -43,33 +49,50 @@ async def get_status():
         try:
             from core.config import get_config
             config = get_config()
-        except:
+        except Exception:
             pass
 
         # 获取视频统计
         all_videos = await db.get_all_videos()
+        downloaded_count = sum(1 for v in all_videos if v.local_path or v.s3_uploaded)
         uploaded_count = sum(1 for v in all_videos if v.s3_uploaded)
+        pending_count = sum(1 for v in all_videos if not v.s3_uploaded and not v.upload_failed)
+        failed_count = sum(1 for v in all_videos if v.upload_failed)
 
         # 获取上次同步
         recent_history = await db.get_recent_sync_history(limit=1)
         last_sync = recent_history[0].to_dict() if recent_history else None
 
-        # 检查 Cookie 有效性
+        # 检查 Cookie 有效性（带缓存，避免页面轮询持续打外部接口）
+        cookie_configured = bool(config and config.bilibili.cookie)
         cookie_valid = False
-        try:
-            api = BilibiliAPI()
-            cookie_valid, _ = await api.validate_cookie()
-        except:
-            pass
+        now_ts = time.monotonic()
+        if cookie_configured:
+            cached_at, cached_value = _cookie_status_cache
+            if now_ts - cached_at < _STATUS_CHECK_TTL_SECONDS:
+                cookie_valid = cached_value
+            else:
+                try:
+                    api = BilibiliAPI()
+                    cookie_valid, _ = await api.validate_cookie()
+                    _cookie_status_cache = (now_ts, cookie_valid)
+                except Exception:
+                    _cookie_status_cache = (now_ts, False)
 
-        # 检查 S3 连接
-        s3_connected = True
+        # 检查 S3 连接（带缓存，避免频繁 list bucket）
+        s3_enabled = bool(config and config.s3.enabled)
+        s3_connected = False
         if config and config.s3.enabled:
-            try:
-                s3 = S3Uploader()
-                s3_connected, _ = await s3.test_connection()
-            except:
-                s3_connected = False
+            cached_at, cached_value = _s3_status_cache
+            if now_ts - cached_at < _STATUS_CHECK_TTL_SECONDS:
+                s3_connected = cached_value
+            else:
+                try:
+                    s3 = S3Uploader()
+                    s3_connected, _ = await s3.test_connection()
+                    _s3_status_cache = (now_ts, s3_connected)
+                except Exception:
+                    _s3_status_cache = (now_ts, False)
 
         # 获取调度器信息
         scheduler_enabled = False
@@ -83,12 +106,16 @@ async def get_status():
         return StatusResponse(
             is_syncing=_sync_manager.is_syncing if _sync_manager else False,
             total_videos=len(all_videos),
+            downloaded_videos=downloaded_count,
             uploaded_videos=uploaded_count,
-            pending_videos=len(all_videos) - uploaded_count,
+            pending_videos=pending_count,
+            failed_videos=failed_count,
             last_sync=last_sync,
             scheduler_enabled=scheduler_enabled,
             next_run_time=next_run_time,
+            cookie_configured=cookie_configured,
             cookie_valid=cookie_valid,
+            s3_enabled=s3_enabled,
             s3_connected=s3_connected
         )
 
@@ -122,6 +149,112 @@ async def get_stats():
     except Exception as e:
         logger.error(f"获取统计失败：{e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/sync/preview")
+async def get_sync_preview():
+    """
+    预览待同步的视频列表
+
+    返回：
+    - 待下载的新视频
+    - 待升级清晰度的视频（有更高清晰度可用）
+    """
+    try:
+        from services.bilibili_api import BilibiliAPI
+
+        if not _sync_manager:
+            raise HTTPException(status_code=503, detail="同步服务未初始化")
+
+        db = await Database.get_instance()
+        api = BilibiliAPI()
+
+        # 获取选中的收藏夹
+        selected_folders = await db.get_selected_favorite_folders()
+
+        if not selected_folders:
+            # 使用默认收藏夹
+            from core.config import get_config
+            config = get_config()
+            if config.bilibili.fav_id:
+                fav_ids = [str(config.bilibili.fav_id)]
+            else:
+                return {"new_videos": [], "upgrade_videos": [], "total": 0, "message": "未选择收藏夹"}
+        else:
+            fav_ids = [str(f.fav_id) for f in selected_folders]
+
+        new_videos = []
+        upgrade_videos = []
+
+        for fav_id in fav_ids:
+            # 获取收藏夹视频列表
+            success, videos_list, error = await api.get_favorites_list(fav_id)
+            if not success:
+                continue
+
+            for video_info in videos_list:
+                bvid = video_info["bvid"]
+                title = video_info["title"]
+
+                # 获取视频分P和清晰度信息
+                success, pages, _ = await api.get_video_pages(bvid)
+                if not success or not pages:
+                    continue
+
+                success, qualities, _ = await api.get_video_quality(bvid, pages[0]["cid"])
+                available_quality = qualities[0] if qualities else 16
+
+                # 检查是否已备份
+                best_uploaded = await db.get_best_uploaded_quality(bvid)
+
+                if best_uploaded is None:
+                    # 新视频
+                    new_videos.append({
+                        "bvid": bvid,
+                        "title": title,
+                        "available_quality": available_quality,
+                        "quality_label": _quality_to_label(available_quality),
+                        "pages": len(pages),
+                        "duration": pages[0].get("duration", 0),
+                        "cover": video_info.get("cover", ""),
+                        "owner": video_info.get("owner", "")
+                    })
+                elif available_quality > best_uploaded:
+                    # 可升级
+                    upgrade_videos.append({
+                        "bvid": bvid,
+                        "title": title,
+                        "current_quality": best_uploaded,
+                        "current_quality_label": _quality_to_label(best_uploaded),
+                        "available_quality": available_quality,
+                        "available_quality_label": _quality_to_label(available_quality),
+                        "pages": len(pages),
+                        "duration": pages[0].get("duration", 0),
+                        "cover": video_info.get("cover", ""),
+                        "owner": video_info.get("owner", "")
+                    })
+
+        return {
+            "new_videos": new_videos,
+            "upgrade_videos": upgrade_videos,
+            "total": len(new_videos) + len(upgrade_videos),
+            "message": None
+        }
+
+    except Exception as e:
+        logger.error(f"预览同步失败：{e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _quality_to_label(quality: int) -> str:
+    """将清晰度代码转换为可读标签"""
+    mapping = {
+        127: "8K", 126: "4K HDR", 125: "4K Dolby", 120: "4K",
+        116: "1080P60", 112: "1080P+", 80: "1080P",
+        74: "720P60", 64: "720P", 48: "720P Dolby",
+        32: "480P", 16: "360P"
+    }
+    return mapping.get(quality, f"{quality}P")
 
 
 @router.post("/sync/start", response_model=ApiResponse)

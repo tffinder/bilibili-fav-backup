@@ -26,8 +26,7 @@ cd bilibili-fav-backup
 # 安装 Python 依赖
 pip install -r requirements.txt
 
-# 安装 biliup（B 站下载工具）
-pip install biliup
+# yt-dlp 已包含在 requirements.txt 中，用于下载 B 站视频
 ```
 
 ### 2. 配置系统
@@ -195,7 +194,7 @@ bilibili-fav-backup/
     └─ 决策：跳过 / 下载
     ↓
 下载视频 (单线程)
-    ├─ 调用 biliup 下载
+    ├─ 调用 yt-dlp 下载
     ├─ 失败重试 (最多 3 次)
     └─ 成功后上传 S3
     ↓
@@ -235,7 +234,7 @@ A: Cookie 有效期通常为 30 天。失效后需要在网页配置中更新 Co
 A: 
 1. 检查网络连接
 2. 确认 Cookie 有效（未登录用户清晰度低）
-3. 检查 biliup 是否为最新版本
+3. 检查 yt-dlp 是否为最新版本：`pip install -U yt-dlp`
 
 ### Q: 上传失败怎么办？
 A:
@@ -248,7 +247,7 @@ A:
 A: 编辑 `config.yaml` 中的 `scheduler.cron` 字段。Cron 表达式格式：`分 时 日 月 星期`
 
 ### Q: 可以下载多个收藏夹吗？
-A: 当前版本仅支持单个收藏夹。如需多个，请运行多个实例或修改代码。
+A: 可以。先在网页的收藏夹管理中选择要同步的收藏夹，定时任务和手动同步都会处理已选收藏夹；如果没有选择任何收藏夹，则使用配置中的默认 `bilibili.fav_id`。
 
 ## 注意事项
 
@@ -261,7 +260,7 @@ A: 当前版本仅支持单个收藏夹。如需多个，请运行多个实例�
 ## 技术栈
 
 - **后端**: Python 3.8+, FastAPI, Uvicorn
-- **下载工具**: biliup
+- **下载工具**: yt-dlp + ffmpeg
 - **定时任务**: APScheduler
 - **数据库**: SQLite, aiosqlite
 - **S3 客户端**: boto3

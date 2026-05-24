@@ -5,6 +5,7 @@ S3 上传模块
 import asyncio
 import os
 import re
+import time
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, Tuple, Callable, Dict, Any, List
@@ -36,6 +37,7 @@ class S3Uploader:
         
         # 进度回调
         self.progress_callback: Optional[Callable[[DownloadProgress], None]] = None
+        self._last_progress_update: Dict[Tuple[str, int], Tuple[float, float, str]] = {}
     
     def ensure_s3_initialized(self) -> None:
         """确保 S3 客户端已初始化"""
@@ -85,6 +87,33 @@ class S3Uploader:
         self.progress_callback = callback
     
     @staticmethod
+    def quality_to_label(quality: int) -> str:
+        """
+        将清晰度代码转换为可读标签
+
+        Args:
+            quality: 清晰度代码
+
+        Returns:
+            清晰度标签，如 "8K", "4K", "1080P", "720P" 等
+        """
+        mapping = {
+            127: "8K",
+            126: "4K_HDR",
+            125: "4K_Dolby",
+            120: "4K",
+            116: "1080P60",
+            112: "1080P_Plus",
+            80: "1080P",
+            74: "720P60",
+            64: "720P",
+            48: "720P_Dolby",
+            32: "480P",
+            16: "360P"
+        }
+        return mapping.get(quality, f"{quality}P")
+
+    @staticmethod
     def normalize_filename(filename: str, max_length: int = 150) -> str:
         """
         规范化文件名
@@ -120,7 +149,7 @@ class S3Uploader:
         """
         生成 S3 存储键名
 
-        格式：视频文件夹/年月/BV号_视频名称.mp4
+        格式：视频文件夹/年月/BV号_视频名称_清晰度.mp4
 
         Args:
             video: 视频对象
@@ -149,14 +178,17 @@ class S3Uploader:
         else:
             year_month = datetime.now().strftime("%Y-%m")
 
-        # 构建文件名：BV号_视频名称
+        # 获取清晰度标签
+        quality_label = self.quality_to_label(video.quality)
+
+        # 构建文件名：BV号_视频名称_清晰度
         # 如果是多 P 视频，添加分 P 信息
         if video.total_pages > 1:
-            filename = f"{video.bvid}_{safe_title}_P{video.page:02d}.mp4"
+            filename = f"{video.bvid}_{safe_title}_P{video.page:02d}_{quality_label}.mp4"
         else:
-            filename = f"{video.bvid}_{safe_title}.mp4"
+            filename = f"{video.bvid}_{safe_title}_{quality_label}.mp4"
 
-        # 最终路径：视频文件夹/年月/BV号_视频名称.mp4
+        # 最终路径：视频文件夹/年月/BV号_视频名称_清晰度.mp4
         key = f"{folder_name}/{year_month}/{filename}"
 
         return key
@@ -171,6 +203,36 @@ class S3Uploader:
         message: Optional[str] = None
     ) -> None:
         """更新上传进度"""
+        key = (bvid, page)
+        now_ts = time.monotonic()
+        last = self._last_progress_update.get(key)
+        should_write = (
+            status in {"completed", "failed"}
+            or progress <= 0
+            or progress >= 100
+            or last is None
+            or status != last[2]
+            or now_ts - last[0] >= 1.0
+            or abs(progress - last[1]) >= 5.0
+        )
+        if not should_write:
+            if self.progress_callback:
+                self.progress_callback(DownloadProgress(
+                    id=None,
+                    bvid=bvid,
+                    title=title,
+                    page=page,
+                    progress=progress,
+                    speed=None,
+                    eta=None,
+                    status=status,
+                    message=message,
+                    created_at="",
+                    updated_at=datetime.now().isoformat()
+                ))
+            return
+        self._last_progress_update[key] = (now_ts, progress, status)
+
         if not self.db:
             await self.init_db()
         
@@ -451,7 +513,8 @@ class S3Uploader:
             是否存在
         """
         try:
-            await asyncio.get_event_loop().run_in_executor(
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(
                 None,
                 lambda: self.s3_client.head_object(
                     Bucket=self.bucket_name,
@@ -504,7 +567,8 @@ class S3Uploader:
 
         try:
             # 尝试列出 bucket 中的对象
-            await asyncio.get_event_loop().run_in_executor(
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(
                 None,
                 lambda: self.s3_client.list_objects_v2(
                     Bucket=self.bucket_name,
@@ -610,7 +674,8 @@ class S3Uploader:
 
             # 清理 S3 测试文件
             try:
-                await asyncio.get_event_loop().run_in_executor(
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(
                     None,
                     lambda: self.s3_client.delete_object(
                         Bucket=self.bucket_name,
@@ -661,7 +726,8 @@ class S3Uploader:
             return False, [], "S3 未配置"
 
         try:
-            response = await asyncio.get_event_loop().run_in_executor(
+            loop = asyncio.get_running_loop()
+            response = await loop.run_in_executor(
                 None,
                 lambda: self.s3_client.list_objects_v2(
                     Bucket=self.bucket_name,

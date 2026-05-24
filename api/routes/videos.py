@@ -166,18 +166,12 @@ async def get_videos(
 
         base_dir = _resolve_download_base()
         progress_map = await db.get_progress_map([(v.bvid, v.page) for v in paginated])
-        api = BilibiliAPI()
-        cover_cache: dict = {}
         result = []
         for v in paginated:
-            if v.bvid not in cover_cache:
-                cover_ok, cover_info, _ = await api.get_video_info(v.bvid)
-                cover_cache[v.bvid] = cover_info.get("cover_url") if cover_ok else ""
-
             model = VideoModel.model_validate(v)
             model.local_path = v.local_path
             model.play_url = _build_play_url(v, base_dir)
-            model.cover_url = cover_cache.get(v.bvid) or ""
+            model.cover_url = ""
             model.max_quality = v.max_quality or v.quality
             model.upload_failed = v.upload_failed if hasattr(v, 'upload_failed') else False
 

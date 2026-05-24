@@ -27,10 +27,10 @@ if errorlevel 1 (
 )
 
 echo.
-echo [3/4] 安装 biliup...
-pip install biliup
+echo [3/4] 检查 yt-dlp...
+python -m yt_dlp --version >nul 2>&1
 if errorlevel 1 (
-    echo [警告] biliup 安装失败，请手动安装
+    echo [警告] 未检测到 yt-dlp，请重新执行 pip install -r requirements.txt
 )
 
 echo.

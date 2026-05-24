@@ -76,6 +76,7 @@ class Database:
     async def _init_tables(self) -> None:
         """初始化数据表"""
         # 视频表
+        # 注意：UNIQUE(bvid, cid, page, quality) 允许同一视频的不同清晰度版本共存
         await self._db.execute('''
             CREATE TABLE IF NOT EXISTS videos (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -96,7 +97,12 @@ class Database:
                 updated_at TEXT NOT NULL,
                 max_quality INTEGER,
                 upload_failed INTEGER DEFAULT 0,
-                UNIQUE(bvid, cid, page)
+                source_available INTEGER DEFAULT 1,
+                source_status TEXT DEFAULT 'unknown',
+                source_checked_at TEXT,
+                source_deleted_at TEXT,
+                source_error TEXT,
+                UNIQUE(bvid, cid, page, quality)
             )
         ''')
 
@@ -106,6 +112,13 @@ class Database:
         await self._safe_add_column('videos', 'fav_id', 'INTEGER')
         await self._safe_add_column('videos', 'fav_title', 'TEXT')
         await self._safe_add_column('videos', 'fav_time', 'INTEGER')
+        await self._safe_add_column('videos', 'up_mid', 'INTEGER')
+        await self._safe_add_column('videos', 'up_name', 'TEXT')
+        await self._safe_add_column('videos', 'source_available', 'INTEGER DEFAULT 1')
+        await self._safe_add_column('videos', 'source_status', "TEXT DEFAULT 'unknown'")
+        await self._safe_add_column('videos', 'source_checked_at', 'TEXT')
+        await self._safe_add_column('videos', 'source_deleted_at', 'TEXT')
+        await self._safe_add_column('videos', 'source_error', 'TEXT')
 
         # 同步历史表
         await self._db.execute('''
@@ -187,9 +200,43 @@ class Database:
             )
         ''')
 
+        # 任务队列表（同步流程产生的视频任务，按 BV 粒度）
+        await self._db.execute('''
+            CREATE TABLE IF NOT EXISTS task_queue (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bvid TEXT NOT NULL,
+                title TEXT NOT NULL,
+                fav_id INTEGER,
+                fav_title TEXT,
+                status TEXT NOT NULL DEFAULT 'queued',
+                current_page INTEGER DEFAULT 0,
+                total_pages INTEGER DEFAULT 0,
+                progress REAL DEFAULT 0,
+                current_action TEXT,
+                error_message TEXT,
+                source TEXT DEFAULT 'sync',
+                enqueued_at TEXT NOT NULL,
+                started_at TEXT,
+                finished_at TEXT
+            )
+        ''')
+        await self._db.execute('CREATE INDEX IF NOT EXISTS idx_task_queue_status ON task_queue(status)')
+        await self._db.execute('CREATE INDEX IF NOT EXISTS idx_task_queue_bvid ON task_queue(bvid)')
+
+        # 视频黑名单（永久跳过）
+        await self._db.execute('''
+            CREATE TABLE IF NOT EXISTS task_blacklist (
+                bvid TEXT PRIMARY KEY,
+                title TEXT,
+                reason TEXT,
+                added_at TEXT NOT NULL
+            )
+        ''')
+
         # 创建索引
         await self._db.execute('CREATE INDEX IF NOT EXISTS idx_videos_bvid ON videos(bvid)')
         await self._db.execute('CREATE INDEX IF NOT EXISTS idx_videos_s3_uploaded ON videos(s3_uploaded)')
+        await self._db.execute('CREATE INDEX IF NOT EXISTS idx_videos_source_status ON videos(source_status)')
         await self._db.execute('CREATE INDEX IF NOT EXISTS idx_notifications_is_read ON notifications(is_read)')
         await self._db.execute('CREATE INDEX IF NOT EXISTS idx_favorite_folders_selected ON favorite_folders(selected)')
         await self._db.execute('CREATE INDEX IF NOT EXISTS idx_video_cache_bvid ON video_cache(bvid)')
@@ -201,8 +248,9 @@ class Database:
         """安全添加列（如果不存在）"""
         try:
             await self._db.execute(f'ALTER TABLE {table} ADD COLUMN {column} {definition}')
-        except:
-            pass
+        except aiosqlite.OperationalError as e:
+            # 列已存在时会抛出 duplicate column name 错误，这是预期行为
+            logger.debug(f"添加列 {table}.{column} 失败（可能已存在）: {e}")
 
     # ==================== Video 操作方法 ====================
 
@@ -213,28 +261,63 @@ class Database:
             INSERT OR REPLACE INTO videos
             (bvid, title, cid, page, total_pages, quality, duration, pubdate,
              owner_name, s3_key, s3_uploaded, s3_quality, local_path, created_at, updated_at,
-             max_quality, upload_failed, fav_id, fav_title, fav_time)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             max_quality, upload_failed, fav_id, fav_title, fav_time, up_mid, up_name,
+             source_available, source_status, source_checked_at, source_deleted_at, source_error)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             video.bvid, video.title, video.cid, video.page, video.total_pages,
             video.quality, video.duration, video.pubdate, video.owner_name,
             video.s3_key, 1 if video.s3_uploaded else 0, video.s3_quality,
             video.local_path, video.created_at, video.updated_at,
             video.max_quality, 1 if video.upload_failed else 0,
-            video.fav_id, video.fav_title, video.fav_time
+            video.fav_id, video.fav_title, video.fav_time,
+            video.up_mid, video.up_name,
+            1 if video.source_available else 0, video.source_status,
+            video.source_checked_at, video.source_deleted_at, video.source_error
         ))
         await self._db.commit()
         return cursor.lastrowid
 
     @require_db
     async def get_video_by_bvid(self, bvid: str) -> Optional[Video]:
-        """根据 BVID 获取视频"""
+        """根据 BVID 获取视频（返回最高清晰度版本）"""
         cursor = await self._db.execute(
-            'SELECT * FROM videos WHERE bvid = ?', (bvid,)
+            'SELECT * FROM videos WHERE bvid = ? ORDER BY quality DESC LIMIT 1', (bvid,)
         )
         row = await cursor.fetchone()
         if row:
             return Video(**dict(row))
+        return None
+
+    @require_db
+    async def get_video_by_bvid_quality(self, bvid: str, quality: int) -> Optional[Video]:
+        """根据 BVID 和清晰度获取视频"""
+        cursor = await self._db.execute(
+            'SELECT * FROM videos WHERE bvid = ? AND quality = ?', (bvid, quality)
+        )
+        row = await cursor.fetchone()
+        if row:
+            return Video(**dict(row))
+        return None
+
+    @require_db
+    async def get_all_videos_by_bvid(self, bvid: str) -> List[Video]:
+        """根据 BVID 获取所有清晰度版本"""
+        cursor = await self._db.execute(
+            'SELECT * FROM videos WHERE bvid = ? ORDER BY quality DESC', (bvid,)
+        )
+        rows = await cursor.fetchall()
+        return [Video(**dict(row)) for row in rows]
+
+    @require_db
+    async def get_best_uploaded_quality(self, bvid: str) -> Optional[int]:
+        """获取已上传的最高清晰度"""
+        cursor = await self._db.execute(
+            'SELECT MAX(quality) FROM videos WHERE bvid = ? AND s3_uploaded = 1', (bvid,)
+        )
+        row = await cursor.fetchone()
+        if row and row[0]:
+            return row[0]
         return None
 
     @require_db
@@ -254,6 +337,54 @@ class Database:
         cursor = await self._db.execute('SELECT * FROM videos ORDER BY created_at DESC')
         rows = await cursor.fetchall()
         return [Video(**dict(row)) for row in rows]
+
+    @require_db
+    async def get_deleted_videos(self) -> List[Video]:
+        """获取已确认从 B 站失效的视频。"""
+        cursor = await self._db.execute('''
+            SELECT * FROM videos
+            WHERE source_status = 'deleted' OR source_available = 0
+            ORDER BY COALESCE(source_deleted_at, source_checked_at, updated_at) DESC
+        ''')
+        rows = await cursor.fetchall()
+        return [Video(**dict(row)) for row in rows]
+
+    @require_db
+    async def update_video_source_status(
+        self,
+        bvid: str,
+        source_available: bool,
+        source_status: str,
+        source_error: Optional[str] = None
+    ) -> None:
+        """更新某个 BVID 所有版本的 B 站源状态。"""
+        now = datetime.now().isoformat()
+        deleted_at_expr = (
+            "COALESCE(source_deleted_at, ?)"
+            if source_status == "deleted"
+            else "source_deleted_at"
+        )
+        params: List[Any] = [
+            1 if source_available else 0,
+            source_status,
+            now,
+            source_error,
+        ]
+        if source_status == "deleted":
+            params.append(now)
+        params.append(bvid)
+
+        await self._db.execute(f'''
+            UPDATE videos
+            SET source_available = ?,
+                source_status = ?,
+                source_checked_at = ?,
+                source_error = ?,
+                source_deleted_at = {deleted_at_expr},
+                updated_at = ?
+            WHERE bvid = ?
+        ''', (*params[:-1], now, params[-1]))
+        await self._db.commit()
 
     @require_db
     async def get_progress_by_bvid_page(self, bvid: str, page: int) -> Optional[DownloadProgress]:
@@ -292,21 +423,38 @@ class Database:
     async def update_video_s3_status(
         self, bvid: str, page: int, s3_key: str, quality: int
     ) -> None:
-        """更新视频 S3 上传状态"""
+        """更新视频 S3 上传状态（根据 bvid、page 和 quality 定位记录）"""
         await self._db.execute('''
             UPDATE videos
             SET s3_key = ?, s3_uploaded = 1, s3_quality = ?, upload_failed = 0, updated_at = ?
-            WHERE bvid = ? AND page = ?
-        ''', (s3_key, quality, datetime.now().isoformat(), bvid, page))
+            WHERE bvid = ? AND page = ? AND quality = ?
+        ''', (s3_key, quality, datetime.now().isoformat(), bvid, page, quality))
         await self._db.commit()
 
     @require_db
-    async def set_upload_failed(self, bvid: str, page: int, failed: bool = True) -> None:
-        """设置上传失败状态"""
+    async def clear_video_local_path(self, bvid: str, page: int) -> None:
+        """删除本地文件后清掉数据库里的 local_path 引用，避免后续 /file 接口返回 404。"""
         await self._db.execute('''
-            UPDATE videos SET upload_failed = ?, updated_at = ?
+            UPDATE videos SET local_path = NULL, updated_at = ?
             WHERE bvid = ? AND page = ?
-        ''', (1 if failed else 0, datetime.now().isoformat(), bvid, page))
+        ''', (datetime.now().isoformat(), bvid, page))
+        await self._db.commit()
+
+    @require_db
+    async def set_upload_failed(self, bvid: str, page: int, failed: bool = True, quality: Optional[int] = None) -> None:
+        """设置上传失败状态"""
+        if quality is not None:
+            # 根据清晰度定位记录
+            await self._db.execute('''
+                UPDATE videos SET upload_failed = ?, updated_at = ?
+                WHERE bvid = ? AND page = ? AND quality = ?
+            ''', (1 if failed else 0, datetime.now().isoformat(), bvid, page, quality))
+        else:
+            # 兼容旧逻辑：更新所有匹配的记录
+            await self._db.execute('''
+                UPDATE videos SET upload_failed = ?, updated_at = ?
+                WHERE bvid = ? AND page = ?
+            ''', (1 if failed else 0, datetime.now().isoformat(), bvid, page))
         await self._db.commit()
 
     @require_db
@@ -477,6 +625,7 @@ class Database:
                 media_count = excluded.media_count,
                 cover = excluded.cover,
                 cover_local = COALESCE(excluded.cover_local, cover_local),
+                selected = excluded.selected,
                 updated_at = excluded.updated_at
         ''', (
             folder.fav_id, folder.title, folder.media_count, folder.cover,
@@ -621,9 +770,200 @@ class Database:
         await self._db.commit()
 
     @require_db
-    async def clear_video_cache_by_source(self, source_type: str) -> None:
-        """清除指定来源的视频缓存"""
+    async def clear_video_cache_by_source(
+        self, source_type: str, source_id: Optional[int] = None
+    ) -> None:
+        """清除指定来源的视频缓存，可按来源 ID 精确清理。"""
+        if source_id is None:
+            await self._db.execute(
+                'DELETE FROM video_cache WHERE source_type = ?', (source_type,)
+            )
+        else:
+            await self._db.execute(
+                'DELETE FROM video_cache WHERE source_type = ? AND source_id = ?',
+                (source_type, source_id)
+            )
+        await self._db.commit()
+
+    # ==================== 任务队列 ====================
+
+    @require_db
+    async def enqueue_task(
+        self,
+        bvid: str,
+        title: str,
+        fav_id: Optional[int] = None,
+        fav_title: Optional[str] = None,
+        total_pages: int = 0,
+        source: str = "sync",
+    ) -> int:
+        """新增一条任务，返回 task_id。"""
+        now = datetime.now().isoformat()
+        cursor = await self._db.execute('''
+            INSERT INTO task_queue (
+                bvid, title, fav_id, fav_title, status,
+                current_page, total_pages, progress, current_action,
+                source, enqueued_at
+            ) VALUES (?, ?, ?, ?, 'queued', 0, ?, 0, '排队中', ?, ?)
+        ''', (bvid, title, fav_id, fav_title, total_pages, source, now))
+        await self._db.commit()
+        return cursor.lastrowid
+
+    @require_db
+    async def update_task(
+        self,
+        task_id: int,
+        *,
+        status: Optional[str] = None,
+        current_page: Optional[int] = None,
+        total_pages: Optional[int] = None,
+        progress: Optional[float] = None,
+        current_action: Optional[str] = None,
+        error_message: Optional[str] = None,
+        started_at: Optional[str] = None,
+        finished_at: Optional[str] = None,
+    ) -> None:
+        fields = []
+        params: list = []
+        for key, value in (
+            ("status", status),
+            ("current_page", current_page),
+            ("total_pages", total_pages),
+            ("progress", progress),
+            ("current_action", current_action),
+            ("error_message", error_message),
+            ("started_at", started_at),
+            ("finished_at", finished_at),
+        ):
+            if value is not None:
+                fields.append(f"{key} = ?")
+                params.append(value)
+        if not fields:
+            return
+        params.append(task_id)
         await self._db.execute(
-            'DELETE FROM video_cache WHERE source_type = ?', (source_type,)
+            f"UPDATE task_queue SET {', '.join(fields)} WHERE id = ?",
+            params
         )
         await self._db.commit()
+
+    @require_db
+    async def get_task(self, task_id: int) -> Optional[dict]:
+        cursor = await self._db.execute(
+            'SELECT * FROM task_queue WHERE id = ?', (task_id,)
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    @require_db
+    async def get_tasks(
+        self,
+        status: Optional[str] = None,
+        limit: int = 200,
+    ) -> list:
+        if status and status != 'all':
+            cursor = await self._db.execute(
+                'SELECT * FROM task_queue WHERE status = ? ORDER BY id DESC LIMIT ?',
+                (status, limit)
+            )
+        else:
+            cursor = await self._db.execute(
+                'SELECT * FROM task_queue ORDER BY id DESC LIMIT ?',
+                (limit,)
+            )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    @require_db
+    async def request_skip_task(self, task_id: int) -> bool:
+        """请求跳过任务：queued 改 skipped；运行中改 cancelling（同步循环看到后自行结束）。"""
+        task = await self.get_task(task_id)
+        if not task:
+            return False
+        current = task["status"]
+        if current in ("completed", "failed", "skipped"):
+            return False
+        if current == "queued":
+            await self.update_task(
+                task_id,
+                status="skipped",
+                current_action="已跳过",
+                finished_at=datetime.now().isoformat()
+            )
+        else:
+            # downloading / uploading：标记为 cancelling，由同步主流程在下一个 await 点退出
+            await self.update_task(
+                task_id,
+                status="cancelling",
+                current_action="正在跳过…"
+            )
+        return True
+
+    @require_db
+    async def clear_finished_tasks(self) -> int:
+        """清理 completed / skipped / failed 的历史任务。"""
+        cursor = await self._db.execute(
+            "DELETE FROM task_queue WHERE status IN ('completed', 'skipped', 'failed')"
+        )
+        await self._db.commit()
+        return cursor.rowcount or 0
+
+    @require_db
+    async def reset_orphan_tasks(self) -> int:
+        """启动时把上次进程残留的 queued/downloading/uploading/cancelling 标记为 failed。"""
+        now = datetime.now().isoformat()
+        cursor = await self._db.execute(
+            "UPDATE task_queue SET status = 'failed', current_action = '进程异常退出', "
+            "error_message = '上次运行未结束', finished_at = ? "
+            "WHERE status IN ('queued', 'downloading', 'uploading', 'cancelling')",
+            (now,)
+        )
+        await self._db.commit()
+        return cursor.rowcount or 0
+
+    @require_db
+    async def get_interrupted_tasks(self) -> list:
+        """返回上次进程被打断的任务（由 reset_orphan_tasks 标记的）。"""
+        cursor = await self._db.execute(
+            "SELECT * FROM task_queue "
+            "WHERE status = 'failed' AND error_message = '上次运行未结束' "
+            "ORDER BY id ASC"
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    # ==================== 黑名单 ====================
+
+    @require_db
+    async def add_blacklist(
+        self, bvid: str, title: Optional[str] = None, reason: Optional[str] = None
+    ) -> None:
+        await self._db.execute('''
+            INSERT INTO task_blacklist (bvid, title, reason, added_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(bvid) DO UPDATE SET
+                title = COALESCE(excluded.title, task_blacklist.title),
+                reason = COALESCE(excluded.reason, task_blacklist.reason)
+        ''', (bvid, title, reason, datetime.now().isoformat()))
+        await self._db.commit()
+
+    @require_db
+    async def remove_blacklist(self, bvid: str) -> None:
+        await self._db.execute('DELETE FROM task_blacklist WHERE bvid = ?', (bvid,))
+        await self._db.commit()
+
+    @require_db
+    async def get_blacklist(self) -> list:
+        cursor = await self._db.execute(
+            'SELECT * FROM task_blacklist ORDER BY added_at DESC'
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    @require_db
+    async def is_blacklisted(self, bvid: str) -> bool:
+        cursor = await self._db.execute(
+            'SELECT 1 FROM task_blacklist WHERE bvid = ? LIMIT 1', (bvid,)
+        )
+        row = await cursor.fetchone()
+        return row is not None
