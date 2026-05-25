@@ -87,8 +87,6 @@ class Downloader:
         # 断点续传状态管理
         self.download_state = DownloadState(self.temp_dir)
 
-        # 正在下载的任务（用于避免重复下载）
-        self._active_downloads: Dict[str, asyncio.Task] = {}
         self._last_progress_update: Dict[Tuple[str, int], Tuple[float, float, str]] = {}
 
     async def resume_pending_downloads(self) -> List[Tuple[str, int, bool, Optional[str], str]]:

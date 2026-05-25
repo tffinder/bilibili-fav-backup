@@ -108,11 +108,27 @@ class UpSyncConfig(BaseModel):
     cron: str = "0 3 * * *"
 
 
+class RcloneConfig(BaseModel):
+    """Rclone 网盘同步配置"""
+    enabled: bool = False
+    delete_after_upload: bool = False
+    remote_name: str = ""
+    remote_path: str = ""
+    remote_type: str = ""  # webdav, drive, onedrive, dropbox, sftp, ftp
+    host: str = ""
+    user: str = ""
+    password: str = ""
+    token: str = ""
+    vendor: str = ""  # WebDAV: nextcloud, owncloud, other
+    extra_flags: str = ""
+
+
 class Config(BaseModel):
     """主配置类"""
     bilibili: BilibiliConfig = Field(default_factory=BilibiliConfig)
     download: DownloadConfig = Field(default_factory=DownloadConfig)
     s3: S3Config = Field(default_factory=S3Config)
+    rclone: RcloneConfig = Field(default_factory=RcloneConfig)
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
     data_refresh: DataRefreshConfig = Field(default_factory=DataRefreshConfig)
     notification: NotificationConfig = Field(default_factory=NotificationConfig)
@@ -139,6 +155,10 @@ class Config(BaseModel):
             self.s3.secret_key,
             self.s3.bucket_name
         ])
+
+    def validate_rclone_config(self) -> bool:
+        """验证 Rclone 配置是否完整"""
+        return bool(self.rclone.remote_name and self.rclone.remote_type)
 
 
 class ConfigManager:
@@ -198,6 +218,7 @@ class ConfigManager:
             bilibili=BilibiliConfig(**config_data.get('bilibili', {})),
             download=DownloadConfig(**config_data.get('download', {})),
             s3=S3Config(**config_data.get('s3', {})),
+            rclone=RcloneConfig(**config_data.get('rclone', {})),
             scheduler=SchedulerConfig(**config_data.get('scheduler', {})),
             data_refresh=DataRefreshConfig(**config_data.get('data_refresh', {})),
             notification=NotificationConfig(**config_data.get('notification', {})),
@@ -251,6 +272,7 @@ class ConfigManager:
             'bilibili': self._config.bilibili.model_dump(),
             'download': self._config.download.model_dump(),
             's3': self._config.s3.model_dump(),
+            'rclone': self._config.rclone.model_dump(),
             'scheduler': self._config.scheduler.model_dump(),
             'data_refresh': self._config.data_refresh.model_dump(),
             'notification': self._config.notification.model_dump(),

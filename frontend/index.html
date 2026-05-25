@@ -2252,7 +2252,7 @@
                     <div class="status-chip-value" id="statusCookieText">未检测</div>
                 </div>
                 <div class="status-chip">
-                    <div class="status-chip-label">S3</div>
+                    <div class="status-chip-label">远程存储</div>
                     <div class="status-chip-value" id="statusS3Text">未启用</div>
                 </div>
                 <div class="status-chip">
@@ -2784,17 +2784,28 @@
                     </div>
                 </div>
 
-                <!-- 右栏：S3 存储 + 高级设置 -->
+                <!-- 右栏：S3 存储 + Rclone + 高级设置 -->
                 <div>
+                    <!-- 存储方式选择 -->
                     <div class="settings-section" style="margin-bottom: 16px;">
-                        <div class="settings-section-header">☁️ S3 存储（可选）</div>
+                        <div class="settings-section-header">☁️ 远程存储（可选，二选一）</div>
                         <div class="settings-section-body">
                             <div class="form-group">
-                                <label class="checkbox-wrapper">
-                                    <input type="checkbox" id="s3Enabled" onchange="toggleS3Fields()">
-                                    <span>启用 S3 上传</span>
-                                </label>
+                                <label class="form-label">存储方式</label>
+                                <select class="form-input" id="storageMode" onchange="toggleStorageMode()">
+                                    <option value="none">仅本地</option>
+                                    <option value="s3">S3 对象存储</option>
+                                    <option value="rclone">Rclone 网盘同步</option>
+                                </select>
                             </div>
+                        </div>
+                    </div>
+
+                    <!-- S3 配置 -->
+                    <div class="settings-section" id="s3Section" style="margin-bottom: 16px; display: none;">
+                        <div class="settings-section-header">🗄️ S3 配置</div>
+                        <div class="settings-section-body">
+                            <input type="hidden" id="s3Enabled">
                             <div class="form-group">
                                 <label class="form-label">Endpoint URL</label>
                                 <input type="text" class="form-input s3-field" id="s3Endpoint" placeholder="https://...">
@@ -2822,6 +2833,80 @@
                                     <input type="checkbox" id="s3DeleteAfterUpload">
                                     <span>上传后删除本地文件</span>
                                 </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Rclone 配置 -->
+                    <div class="settings-section" id="rcloneSection" style="margin-bottom: 16px; display: none;">
+                        <div class="settings-section-header">📂 Rclone 网盘配置</div>
+                        <div class="settings-section-body">
+                            <div class="form-group">
+                                <label class="form-label">Remote 类型</label>
+                                <select class="form-input" id="rcloneRemoteType" onchange="toggleRcloneFields()">
+                                    <option value="">请选择...</option>
+                                    <option value="webdav">WebDAV（Alist / NextCloud / OwnCloud）</option>
+                                    <option value="sftp">SFTP</option>
+                                    <option value="ftp">FTP</option>
+                                    <option value="drive">Google Drive</option>
+                                    <option value="onedrive">OneDrive</option>
+                                    <option value="dropbox">Dropbox</option>
+                                    <option value="s3">S3 兼容（MinIO 等）</option>
+                                </select>
+                            </div>
+                            <div class="form-row" style="grid-template-columns: 1fr 1fr;">
+                                <div class="form-group">
+                                    <label class="form-label">Remote 名称</label>
+                                    <input type="text" class="form-input" id="rcloneRemoteName" placeholder="myremote">
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">远端路径</label>
+                                    <input type="text" class="form-input" id="rcloneRemotePath" placeholder="bilibili-backup/">
+                                </div>
+                            </div>
+                            <!-- WebDAV 专用：vendor -->
+                            <div class="form-group rclone-webdav-field" style="display: none;">
+                                <label class="form-label">WebDAV Vendor</label>
+                                <select class="form-input" id="rcloneVendor">
+                                    <option value="other">其他 / Alist</option>
+                                    <option value="nextcloud">NextCloud</option>
+                                    <option value="owncloud">OwnCloud</option>
+                                </select>
+                            </div>
+                            <!-- Host/URL 字段（WebDAV / SFTP / FTP / S3） -->
+                            <div class="form-group rclone-host-field" style="display: none;">
+                                <label class="form-label rclone-host-label">Host / URL</label>
+                                <input type="text" class="form-input" id="rcloneHost" placeholder="https://...">
+                            </div>
+                            <!-- User / Password 字段 -->
+                            <div class="form-row rclone-auth-field" style="grid-template-columns: 1fr 1fr; display: none;">
+                                <div class="form-group">
+                                    <label class="form-label rclone-user-label">用户名</label>
+                                    <input type="text" class="form-input" id="rcloneUser">
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label rclone-pass-label">密码</label>
+                                    <input type="password" class="form-input" id="rclonePassword">
+                                </div>
+                            </div>
+                            <!-- Token 字段（Drive / OneDrive / Dropbox） -->
+                            <div class="form-group rclone-token-field" style="display: none;">
+                                <label class="form-label">OAuth Token (JSON)</label>
+                                <textarea class="form-input" id="rcloneToken" rows="3" placeholder='{"access_token":"...","token_type":"Bearer",...}'></textarea>
+                                <div class="form-hint">在本地运行 <code>rclone authorize "drive"</code> 获取 token</div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">额外 rclone 参数（可选）</label>
+                                <input type="text" class="form-input" id="rcloneExtraFlags" placeholder="--transfers 4 --checkers 8">
+                            </div>
+                            <div class="form-group">
+                                <label class="checkbox-wrapper">
+                                    <input type="checkbox" id="rcloneDeleteAfterUpload">
+                                    <span>上传后删除本地文件</span>
+                                </label>
+                            </div>
+                            <div style="margin-top: 8px;">
+                                <button class="btn btn-secondary" onclick="testRclone()">测试 Rclone 连接</button>
                             </div>
                         </div>
                     </div>
@@ -3031,11 +3116,54 @@
         }
 
         function toggleS3Fields() {
-            const enabled = document.getElementById('s3Enabled').checked;
-            document.querySelectorAll('.s3-field').forEach(el => {
-                el.style.opacity = enabled ? '1' : '0.5';
-                el.querySelectorAll('input').forEach(inp => inp.disabled = !enabled);
-            });
+            // kept for compatibility, actual toggle is in toggleStorageMode
+        }
+
+        function toggleStorageMode() {
+            const mode = document.getElementById('storageMode').value;
+            document.getElementById('s3Section').style.display = mode === 's3' ? '' : 'none';
+            document.getElementById('rcloneSection').style.display = mode === 'rclone' ? '' : 'none';
+            document.getElementById('s3SpeedTest').style.display = mode === 's3' ? '' : 'none';
+            if (mode === 'rclone') toggleRcloneFields();
+        }
+
+        function toggleRcloneFields() {
+            const type = document.getElementById('rcloneRemoteType').value;
+            const needsHost = ['webdav', 'sftp', 'ftp', 's3'].includes(type);
+            const needsAuth = ['webdav', 'sftp', 'ftp', 's3'].includes(type);
+            const needsToken = ['drive', 'onedrive', 'dropbox'].includes(type);
+            const needsVendor = type === 'webdav';
+
+            document.querySelectorAll('.rclone-host-field').forEach(el => el.style.display = needsHost ? '' : 'none');
+            document.querySelectorAll('.rclone-auth-field').forEach(el => el.style.display = needsAuth ? '' : 'none');
+            document.querySelectorAll('.rclone-token-field').forEach(el => el.style.display = needsToken ? '' : 'none');
+            document.querySelectorAll('.rclone-webdav-field').forEach(el => el.style.display = needsVendor ? '' : 'none');
+
+            const hostLabel = document.querySelector('.rclone-host-label');
+            if (hostLabel) {
+                if (type === 'webdav') hostLabel.textContent = 'WebDAV URL';
+                else if (type === 's3') hostLabel.textContent = 'Endpoint URL';
+                else hostLabel.textContent = 'Host';
+            }
+            const userLabel = document.querySelector('.rclone-user-label');
+            if (userLabel) userLabel.textContent = type === 's3' ? 'Access Key' : '用户名';
+            const passLabel = document.querySelector('.rclone-pass-label');
+            if (passLabel) passLabel.textContent = type === 's3' ? 'Secret Key' : '密码';
+        }
+
+        async function testRclone() {
+            try {
+                await saveConfig();
+                const res = await fetch(`${API_BASE}/test/rclone`, { method: 'POST' });
+                const result = await res.json();
+                if (result.success) {
+                    showToast(result.message || 'Rclone 连接成功', 'success');
+                } else {
+                    showToast('连接失败：' + (result.message || '未知错误'), 'error');
+                }
+            } catch (e) {
+                showToast('测试失败：' + e.message, 'error');
+            }
         }
 
         // 加载状态
@@ -3881,13 +4009,35 @@
                 document.getElementById('delayInput').value = cfg.download_request_delay ?? 1;
                 document.getElementById('tempDirInput').value = cfg.download_temp_dir || './temp';
 
-                document.getElementById('s3Enabled').checked = cfg.s3_enabled || false;
+                document.getElementById('s3Enabled').value = cfg.s3_enabled ? 'true' : '';
                 document.getElementById('s3Endpoint').value = cfg.s3_endpoint_url || '';
                 document.getElementById('s3AccessKey').value = cfg.s3_access_key || '';
                 document.getElementById('s3SecretKey').value = cfg.s3_secret_key || '';
                 document.getElementById('s3Bucket').value = cfg.s3_bucket_name || '';
                 document.getElementById('s3Region').value = cfg.s3_region_name || 'us-east-1';
                 document.getElementById('s3DeleteAfterUpload').checked = cfg.s3_delete_after_upload || false;
+
+                // Rclone 配置
+                document.getElementById('rcloneRemoteType').value = cfg.rclone_remote_type || '';
+                document.getElementById('rcloneRemoteName').value = cfg.rclone_remote_name || '';
+                document.getElementById('rcloneRemotePath').value = cfg.rclone_remote_path || '';
+                document.getElementById('rcloneHost').value = cfg.rclone_host || '';
+                document.getElementById('rcloneUser').value = cfg.rclone_user || '';
+                document.getElementById('rclonePassword').value = cfg.rclone_password || '';
+                document.getElementById('rcloneToken').value = cfg.rclone_token || '';
+                document.getElementById('rcloneVendor').value = cfg.rclone_vendor || 'other';
+                document.getElementById('rcloneExtraFlags').value = cfg.rclone_extra_flags || '';
+                document.getElementById('rcloneDeleteAfterUpload').checked = cfg.rclone_delete_after_upload || false;
+
+                // 存储模式选择器
+                if (cfg.rclone_enabled) {
+                    document.getElementById('storageMode').value = 'rclone';
+                } else if (cfg.s3_enabled) {
+                    document.getElementById('storageMode').value = 's3';
+                } else {
+                    document.getElementById('storageMode').value = 'none';
+                }
+                toggleStorageMode();
 
                 document.getElementById('schedulerEnabled').checked = cfg.scheduler_enabled || false;
                 document.getElementById('schedulerCron').value = cfg.scheduler_cron || '0 2 * * *';
@@ -3907,12 +4057,12 @@
                 document.getElementById('upSyncEnabled').checked = cfg.up_sync_enabled || false;
                 document.getElementById('upSyncCron').value = cfg.up_sync_cron || '0 3 * * *';
 
-                toggleS3Fields();
-
                 const qualityLabel = QUALITY_LABELS[cfg.download_quality] || cfg.download_quality + 'P';
                 document.getElementById('configFavorite').textContent = cfg.bilibili_fav_id || '未设置';
                 document.getElementById('configQuality').textContent = qualityLabel;
-                document.getElementById('configStorage').textContent = cfg.s3_enabled ? '本地 + S3' : '仅本地';
+                const storageMode = document.getElementById('storageMode').value;
+                const storageLabelMap = { none: '仅本地', s3: '本地 + S3', rclone: '本地 + Rclone' };
+                document.getElementById('configStorage').textContent = storageLabelMap[storageMode] || '仅本地';
             } catch (e) {
                 console.error('加载配置失败:', e);
             }
@@ -3920,6 +4070,7 @@
 
         async function saveConfig() {
             try {
+                const storageMode = document.getElementById('storageMode').value;
                 const res = await fetch(`${API_BASE}/config`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
@@ -3930,13 +4081,24 @@
                         download_retry_times: parseInt(document.getElementById('retryInput').value) || 3,
                         download_request_delay: parseFloat(document.getElementById('delayInput').value) || 1,
                         download_temp_dir: document.getElementById('tempDirInput').value,
-                        s3_enabled: document.getElementById('s3Enabled').checked,
+                        s3_enabled: storageMode === 's3',
                         s3_endpoint_url: document.getElementById('s3Endpoint').value,
                         s3_access_key: document.getElementById('s3AccessKey').value,
                         s3_secret_key: document.getElementById('s3SecretKey').value,
                         s3_bucket_name: document.getElementById('s3Bucket').value,
                         s3_region_name: document.getElementById('s3Region').value,
                         s3_delete_after_upload: document.getElementById('s3DeleteAfterUpload').checked,
+                        rclone_enabled: storageMode === 'rclone',
+                        rclone_remote_type: document.getElementById('rcloneRemoteType').value,
+                        rclone_remote_name: document.getElementById('rcloneRemoteName').value,
+                        rclone_remote_path: document.getElementById('rcloneRemotePath').value,
+                        rclone_host: document.getElementById('rcloneHost').value,
+                        rclone_user: document.getElementById('rcloneUser').value,
+                        rclone_password: document.getElementById('rclonePassword').value,
+                        rclone_token: document.getElementById('rcloneToken').value,
+                        rclone_vendor: document.getElementById('rcloneVendor').value,
+                        rclone_extra_flags: document.getElementById('rcloneExtraFlags').value,
+                        rclone_delete_after_upload: document.getElementById('rcloneDeleteAfterUpload').checked,
                         scheduler_enabled: document.getElementById('schedulerEnabled').checked,
                         scheduler_cron: document.getElementById('schedulerCron').value,
                         scheduler_timezone: document.getElementById('schedulerTimezone').value,

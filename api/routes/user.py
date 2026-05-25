@@ -81,7 +81,7 @@ async def get_watch_later(force_refresh: bool = False):
 
 
 @router.get("/user/history", response_model=ApiResponse)
-async def get_watch_history(page: int = 1, page_size: int = 50, force_refresh: bool = False):
+async def get_watch_history(page: int = 1, page_size: int = 20, force_refresh: bool = False):
     """获取观看历史
 
     Args:
@@ -110,6 +110,8 @@ async def get_watch_history(page: int = 1, page_size: int = 50, force_refresh: b
                         "updated_at": v.updated_at
                     } for v in cached]
                 )
+
+        page_size = max(1, min(page_size, 20))
 
         # 调用 B 站 API 获取数据
         api = BilibiliAPI()

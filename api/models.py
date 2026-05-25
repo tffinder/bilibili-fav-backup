@@ -45,6 +45,17 @@ class ConfigModel(BaseModel):
     skip_max_total_duration: int = 0
     skip_interactive: bool = False
     skip_max_video_size_gib: float = 0
+    rclone_enabled: bool = False
+    rclone_delete_after_upload: bool = False
+    rclone_remote_name: str = ""
+    rclone_remote_path: str = ""
+    rclone_remote_type: str = ""
+    rclone_host: str = ""
+    rclone_user: str = ""
+    rclone_password: str = ""
+    rclone_token: str = ""
+    rclone_vendor: str = ""
+    rclone_extra_flags: str = ""
     up_sync_enabled: bool = False
     up_sync_cron: str = "0 3 * * *"
 
@@ -88,6 +99,17 @@ class ConfigUpdateRequest(BaseModel):
     skip_max_total_duration: Optional[int] = None
     skip_interactive: Optional[bool] = None
     skip_max_video_size_gib: Optional[float] = None
+    rclone_enabled: Optional[bool] = None
+    rclone_delete_after_upload: Optional[bool] = None
+    rclone_remote_name: Optional[str] = None
+    rclone_remote_path: Optional[str] = None
+    rclone_remote_type: Optional[str] = None
+    rclone_host: Optional[str] = None
+    rclone_user: Optional[str] = None
+    rclone_password: Optional[str] = None
+    rclone_token: Optional[str] = None
+    rclone_vendor: Optional[str] = None
+    rclone_extra_flags: Optional[str] = None
     up_sync_enabled: Optional[bool] = None
     up_sync_cron: Optional[str] = None
 

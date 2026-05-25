@@ -13,6 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from loguru import logger
 
 import boto3
+from boto3.s3.transfer import TransferConfig
 from botocore.exceptions import ClientError, NoCredentialsError
 from botocore.config import Config
 
@@ -20,9 +21,29 @@ from core.config import get_config
 from core.database import Database, Video, DownloadProgress
 
 
+# S3 multipart 分段策略：大文件分段并发上传，提升吞吐
+_TRANSFER_CONFIG = TransferConfig(
+    multipart_threshold=50 * 1024 * 1024,   # 50MB 以上启用分段
+    multipart_chunksize=10 * 1024 * 1024,   # 每段 10MB
+    max_concurrency=4,
+    use_threads=True
+)
+
+
 class S3Uploader:
     """S3 上传器"""
-    
+
+    # 共享线程池：所有 S3Uploader 实例复用，避免每次上传新建/销毁线程
+    _shared_executor: Optional[ThreadPoolExecutor] = None
+
+    @classmethod
+    def _get_executor(cls) -> ThreadPoolExecutor:
+        if cls._shared_executor is None:
+            cls._shared_executor = ThreadPoolExecutor(
+                max_workers=4, thread_name_prefix="s3-upload"
+            )
+        return cls._shared_executor
+
     def __init__(self):
         self.config = get_config()
         self.db: Optional[Database] = None
@@ -31,13 +52,15 @@ class S3Uploader:
         self.upload_timeout = self.config.s3.upload_timeout
         self.retry_times = self.config.s3.retry_times
         self.rate_limit = self.config.s3.rate_limit
-        
+
         # 延迟初始化 S3 客户端（避免启动时配置为空报错）
         # self._init_s3_client()
-        
+
         # 进度回调
         self.progress_callback: Optional[Callable[[DownloadProgress], None]] = None
         self._last_progress_update: Dict[Tuple[str, int], Tuple[float, float, str]] = {}
+        # 速度/ETA 计算：key=(bvid, page), value=(monotonic_ts, bytes_transferred)
+        self._upload_speed_tracker: Dict[Tuple[str, int], Tuple[float, int]] = {}
     
     def ensure_s3_initialized(self) -> None:
         """确保 S3 客户端已初始化"""
@@ -55,10 +78,13 @@ class S3Uploader:
                 return
             
             # boto3 配置
+            # OpenList / MinIO / Ceph 等 S3 兼容存储要 path-style 寻址 + v4 签名
             botocore_config = Config(
                 connect_timeout=10,
                 read_timeout=s3_config.upload_timeout,
-                retries={'max_attempts': 3}
+                retries={'max_attempts': 3},
+                signature_version='s3v4',
+                s3={'addressing_style': 'path'}
             )
             
             self.s3_client = boto3.client(
@@ -200,7 +226,9 @@ class S3Uploader:
         page: int,
         progress: float,
         status: str = "uploading",
-        message: Optional[str] = None
+        message: Optional[str] = None,
+        speed: Optional[float] = None,
+        eta: Optional[int] = None
     ) -> None:
         """更新上传进度"""
         key = (bvid, page)
@@ -223,8 +251,8 @@ class S3Uploader:
                     title=title,
                     page=page,
                     progress=progress,
-                    speed=None,
-                    eta=None,
+                    speed=speed,
+                    eta=eta,
                     status=status,
                     message=message,
                     created_at="",
@@ -235,62 +263,67 @@ class S3Uploader:
 
         if not self.db:
             await self.init_db()
-        
+
         now = datetime.now().isoformat()
-        
+
         progress_obj = DownloadProgress(
             id=None,
             bvid=bvid,
             title=title,
             page=page,
             progress=progress,
-            speed=None,
-            eta=None,
+            speed=speed,
+            eta=eta,
             status=status,
             message=message,
             created_at=now,
             updated_at=now
         )
-        
+
         await self.db.update_download_progress(progress_obj)
-        
+
         # 调用回调函数
         if self.progress_callback:
             self.progress_callback(progress_obj)
     
     def _upload_file_sync(
-        self, 
-        local_path: str, 
+        self,
+        local_path: str,
         s3_key: str,
+        file_size: int,
         callback: Optional[Callable[[int], None]] = None
     ) -> bool:
         """
         同步上传文件（在后台线程中运行）
-        
+
         Args:
             local_path: 本地文件路径
             s3_key: S3 键名
+            file_size: 文件总大小（预先计算，避免回调里反复 stat）
             callback: 进度回调函数 (bytes_transferred)
-            
+
         Returns:
             是否成功
         """
         try:
-            file_size = Path(local_path).stat().st_size
-            
-            # 创建 ProgressCallback 类实例
+            # multipart 模式下回调来自多个线程，需要线程安全累加
+            import threading
+            lock = threading.Lock()
+
             class ProgressCallback:
                 def __init__(self, total_size, cb):
                     self.total_size = total_size
                     self.cb = cb
                     self.seen_so_far = 0
-                
+
                 def __call__(self, bytes_amount):
-                    self.seen_so_far += bytes_amount
+                    with lock:
+                        self.seen_so_far += bytes_amount
+                        seen = self.seen_so_far
                     if self.cb:
-                        self.cb(self.seen_so_far)
-            
-            # 上传文件
+                        self.cb(seen)
+
+            # 上传文件（启用 multipart）
             self.s3_client.upload_file(
                 local_path,
                 self.bucket_name,
@@ -299,12 +332,13 @@ class S3Uploader:
                     'ContentType': 'video/mp4',
                     'ACL': 'private'  # 私有访问
                 },
+                Config=_TRANSFER_CONFIG,
                 Callback=ProgressCallback(file_size, callback)
             )
-            
+
             logger.info(f"上传成功：{s3_key}")
             return True
-            
+
         except NoCredentialsError:
             logger.error("S3 凭证无效")
             raise
@@ -390,6 +424,8 @@ class S3Uploader:
                         try:
                             os.remove(local_path)
                             logger.info(f"已删除本地文件：{local_path}")
+                            # 同步清掉数据库里的 local_path，避免 /file 接口后续 404
+                            await self.db.clear_video_local_path(video.bvid, video.page)
 
                             # 清理视频临时目录（仅在删除本地文件时）
                             from services.downloader import Downloader
@@ -462,10 +498,33 @@ class S3Uploader:
         # 保存当前事件循环的引用
         loop = asyncio.get_running_loop()
 
+        # 预读文件大小，回调不再触发 stat
+        file_size = Path(local_path).stat().st_size
+        speed_key = (video.bvid, video.page)
+        # 初始化速度跟踪起点
+        self._upload_speed_tracker[speed_key] = (time.monotonic(), 0)
+
         def progress_callback(bytes_transferred):
-            """进度回调"""
-            file_size = Path(local_path).stat().st_size
-            progress = (bytes_transferred / file_size) * 100
+            """进度回调：计算实时速度与 ETA"""
+            progress = (bytes_transferred / file_size) * 100 if file_size else 0.0
+
+            # 速度 = Δbytes / Δt（使用上次回调到现在的窗口）
+            speed: Optional[float] = None
+            eta: Optional[int] = None
+            last = self._upload_speed_tracker.get(speed_key)
+            now_ts = time.monotonic()
+            if last is not None:
+                last_ts, last_bytes = last
+                dt = now_ts - last_ts
+                if dt >= 0.5:  # 太短的窗口波动大，跳过
+                    delta = bytes_transferred - last_bytes
+                    if delta > 0:
+                        speed = delta / dt  # 字节/秒
+                        remaining = max(file_size - bytes_transferred, 0)
+                        eta = int(remaining / speed) if speed > 0 else None
+                    self._upload_speed_tracker[speed_key] = (now_ts, bytes_transferred)
+            else:
+                self._upload_speed_tracker[speed_key] = (now_ts, bytes_transferred)
 
             # 异步更新进度（使用保存的事件循环引用）
             try:
@@ -476,31 +535,35 @@ class S3Uploader:
                         page=video.page,
                         progress=progress,
                         status="uploading",
-                        message=f"已上传 {bytes_transferred / 1024 / 1024:.1f}MB"
+                        message=f"已上传 {bytes_transferred / 1024 / 1024:.1f}MB",
+                        speed=speed,
+                        eta=eta
                     ),
                     loop
                 )
             except Exception as e:
                 logger.debug(f"更新进度失败：{e}")
 
-        # 在线程池中执行上传
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(
+        # 在共享线程池中执行上传
+        try:
+            future = loop.run_in_executor(
+                self._get_executor(),
                 self._upload_file_sync,
                 local_path,
                 s3_key,
+                file_size,
                 progress_callback
             )
-
             try:
-                # 使用 asyncio.wait_for 来处理超时
                 return await asyncio.wait_for(
-                    asyncio.wrap_future(future),
+                    future,
                     timeout=self.upload_timeout + 60  # 额外 60 秒缓冲
                 )
             except asyncio.TimeoutError:
                 logger.error(f"上传超时：{s3_key}")
                 raise TimeoutError(f"上传超时 ({self.upload_timeout}秒)")
+        finally:
+            self._upload_speed_tracker.pop(speed_key, None)
     
     async def check_file_exists(self, s3_key: str) -> bool:
         """
@@ -529,7 +592,27 @@ class S3Uploader:
         except Exception as e:
             logger.error(f"检查文件存在失败：{e}")
             return False
-    
+
+    async def generate_download_url(self, s3_key: str, expires_in: int = 21600) -> Optional[str]:
+        """生成 S3 文件临时下载链接（默认 6 小时）。"""
+        self.ensure_s3_initialized()
+        if not self.s3_client:
+            return None
+
+        try:
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(
+                None,
+                lambda: self.s3_client.generate_presigned_url(
+                    "get_object",
+                    Params={"Bucket": self.bucket_name, "Key": s3_key},
+                    ExpiresIn=expires_in
+                )
+            )
+        except Exception as e:
+            logger.error(f"生成 S3 下载链接失败：{e}")
+            return None
+
     async def get_video_quality_from_s3(
         self, bvid: str
     ) -> Optional[int]:
@@ -615,6 +698,8 @@ class S3Uploader:
 
             test_file = temp_dir / f"s3_speed_test_{uuid.uuid4().hex[:8]}.bin"
 
+            loop = asyncio.get_running_loop()
+
             # 生成随机数据
             logger.info(f"创建 {file_size_mb}MB 测试文件...")
             start_create = time.time()
@@ -645,18 +730,16 @@ class S3Uploader:
                 progress = (bytes_transferred / actual_size) * 100
                 logger.debug(f"上传进度：{progress:.1f}%")
 
-            # 在线程池中执行上传
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(
-                    self._upload_file_sync,
-                    str(test_file),
-                    s3_key,
-                    upload_callback
-                )
-                await asyncio.wait_for(
-                    asyncio.wrap_future(future),
-                    timeout=600
-                )
+            # 在共享线程池中执行上传
+            future = loop.run_in_executor(
+                self._get_executor(),
+                self._upload_file_sync,
+                str(test_file),
+                s3_key,
+                actual_size,
+                upload_callback
+            )
+            await asyncio.wait_for(future, timeout=600)
 
             upload_time = time.time() - start_upload
 
@@ -674,7 +757,6 @@ class S3Uploader:
 
             # 清理 S3 测试文件
             try:
-                loop = asyncio.get_running_loop()
                 await loop.run_in_executor(
                     None,
                     lambda: self.s3_client.delete_object(

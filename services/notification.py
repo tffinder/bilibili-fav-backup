@@ -175,7 +175,7 @@ class NotificationService:
         message = (
             f"同步完成 - 总计：{total}, "
             f"新增：{new}, 更新：{updated}, "
-            f"跳过：{skipped}, 失败：{failed}"
+            f"已备份跳过：{skipped}, 失败：{failed}"
         )
         
         level = (

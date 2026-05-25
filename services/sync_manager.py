@@ -12,6 +12,7 @@ from core.database import Database, Video, SyncHistory, FavoriteFolder, VideoCac
 from services.bilibili_api import BilibiliAPI
 from services.downloader import Downloader
 from services.s3_uploader import S3Uploader
+from services.rclone_uploader import RcloneUploader
 from services.notification import NotificationService, NotificationLevel
 
 
@@ -58,6 +59,7 @@ class SyncManager:
         self.api = BilibiliAPI()
         self.downloader = Downloader()
         self.s3_uploader = S3Uploader()
+        self.rclone_uploader = RcloneUploader()
         self.notification = NotificationService.get_instance()
 
         # 同步状态
@@ -125,6 +127,7 @@ class SyncManager:
         self.db = await Database.get_instance()
         await self.downloader.init_db()
         await self.s3_uploader.init_db()
+        await self.rclone_uploader.init_db()
 
     async def start_sync(self, manual: bool = False) -> bool:
         """
@@ -155,6 +158,13 @@ class SyncManager:
                 await self.notification.send_error(
                     title="配置不完整",
                     message="S3 配置不完整"
+                )
+                return False
+
+            if self.config.rclone.enabled and not self.config.validate_rclone_config():
+                await self.notification.send_error(
+                    title="配置不完整",
+                    message="Rclone 配置不完整"
                 )
                 return False
 
@@ -755,7 +765,8 @@ class SyncManager:
             await self.db.add_video(video_obj)
 
             # 3) 上传或本地标记（与下一 P 的下载流水线并行）
-            if self.config.s3.enabled:
+            upload_enabled = self.config.s3.enabled or self.config.rclone.enabled
+            if upload_enabled:
                 if await _is_cancelled():
                     return ("cancelled", page_num, "用户跳过")
                 async with upload_sem:
@@ -768,11 +779,18 @@ class SyncManager:
                             current_action=f"上传 P{page_num}/{len(pages)}",
                             progress=round((page_num - 0.5) / len(pages) * 100, 1)
                         )
-                    up_success, s3_key, up_error = await self.s3_uploader.upload_video(
-                        video=video_obj,
-                        local_path=file_path,
-                        delete_after_upload=self.config.s3.delete_after_upload
-                    )
+                    if self.config.rclone.enabled:
+                        up_success, remote_key, up_error = await self.rclone_uploader.upload_video(
+                            video=video_obj,
+                            local_path=file_path,
+                            delete_after_upload=self.config.rclone.delete_after_upload
+                        )
+                    else:
+                        up_success, remote_key, up_error = await self.s3_uploader.upload_video(
+                            video=video_obj,
+                            local_path=file_path,
+                            delete_after_upload=self.config.s3.delete_after_upload
+                        )
                 if not up_success:
                     logger.error(f"上传失败 {bvid} P{page_num}: {up_error}")
                     await self.db.set_upload_failed(
@@ -863,6 +881,13 @@ class SyncManager:
                 await self.notification.send_error(
                     title="配置不完整",
                     message="S3 配置不完整"
+                )
+                return False
+
+            if self.config.rclone.enabled and not self.config.validate_rclone_config():
+                await self.notification.send_error(
+                    title="配置不完整",
+                    message="Rclone 配置不完整"
                 )
                 return False
 

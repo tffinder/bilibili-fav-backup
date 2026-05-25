@@ -93,6 +93,14 @@ async def lifespan(app: FastAPI):
         db = await Database.get_instance()
         logger.info("数据库初始化完成")
 
+        # 清理上次进程残留的运行中任务
+        try:
+            orphans = await db.reset_orphan_tasks()
+            if orphans:
+                logger.info(f"清理上次未结束的任务 {orphans} 条")
+        except Exception as e:
+            logger.warning(f"清理残留任务失败：{e}")
+
         # 初始化服务
         sync_manager = SyncManager()
         scheduler = create_scheduler(sync_manager)

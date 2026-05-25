@@ -28,6 +28,27 @@ _s3_status_cache: Tuple[float, bool] = (0.0, False)
 _STATUS_CHECK_TTL_SECONDS = 60.0
 
 
+def _progress_failed(progress) -> bool:
+    return bool(progress and progress.status in {"failed", "upload_failed"})
+
+
+def _is_local_only(video) -> bool:
+    """本地保留模式：s3_uploaded 为真但 s3_key 是 local:// 占位符"""
+    return bool(video.s3_uploaded and video.s3_key and video.s3_key.startswith("local://"))
+
+
+def _matches_archive_status(video, status: str, progress=None) -> bool:
+    if status == "uploaded":
+        return video.s3_uploaded and not _is_local_only(video)
+    if status == "downloaded":
+        return bool(video.local_path or video.s3_uploaded)
+    if status == "failed":
+        return not video.s3_uploaded and bool(video.upload_failed or _progress_failed(progress))
+    if status == "pending":
+        return not video.s3_uploaded and not video.upload_failed and not _progress_failed(progress)
+    return True
+
+
 def init_services(sync_manager: SyncManager, scheduler: TaskScheduler) -> None:
     """初始化服务实例"""
     global _sync_manager, _scheduler
@@ -54,10 +75,26 @@ async def get_status():
 
         # 获取视频统计
         all_videos = await db.get_all_videos()
-        downloaded_count = sum(1 for v in all_videos if v.local_path or v.s3_uploaded)
-        uploaded_count = sum(1 for v in all_videos if v.s3_uploaded)
-        pending_count = sum(1 for v in all_videos if not v.s3_uploaded and not v.upload_failed)
-        failed_count = sum(1 for v in all_videos if v.upload_failed)
+        progress_map = {
+            (p.bvid, p.page): p
+            for p in await db.get_all_progress()
+        }
+        downloaded_count = sum(
+            1 for v in all_videos
+            if _matches_archive_status(v, "downloaded", progress_map.get((v.bvid, v.page)))
+        )
+        uploaded_count = sum(
+            1 for v in all_videos
+            if _matches_archive_status(v, "uploaded", progress_map.get((v.bvid, v.page)))
+        )
+        pending_count = sum(
+            1 for v in all_videos
+            if _matches_archive_status(v, "pending", progress_map.get((v.bvid, v.page)))
+        )
+        failed_count = sum(
+            1 for v in all_videos
+            if _matches_archive_status(v, "failed", progress_map.get((v.bvid, v.page)))
+        )
 
         # 获取上次同步
         recent_history = await db.get_recent_sync_history(limit=1)
@@ -280,6 +317,49 @@ async def start_sync(request: SyncStartRequest = None):
 
     except Exception as e:
         logger.error(f"启动同步失败：{e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/sync/interrupted", response_model=ApiResponse)
+async def get_interrupted_count():
+    """查询上次中断的任务数量。"""
+    try:
+        db = await Database.get_instance()
+        tasks = await db.get_interrupted_tasks()
+        return ApiResponse(success=True, message="ok", data={
+            "count": len(tasks),
+            "tasks": [
+                {"id": t["id"], "bvid": t["bvid"], "title": t["title"], "fav_title": t.get("fav_title")}
+                for t in tasks[:20]
+            ]
+        })
+    except Exception as e:
+        logger.error(f"查询中断任务失败：{e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/sync/resume", response_model=ApiResponse)
+async def resume_interrupted_sync():
+    """继续上次被中断的任务。"""
+    try:
+        if not _sync_manager:
+            raise HTTPException(status_code=503, detail="同步服务未初始化")
+        if _sync_manager.is_syncing:
+            return ApiResponse(success=False, message="同步任务正在进行中")
+
+        db = await Database.get_instance()
+        tasks = await db.get_interrupted_tasks()
+        if not tasks:
+            return ApiResponse(success=False, message="没有需要继续的中断任务")
+
+        asyncio.create_task(_sync_manager.resume_interrupted())
+        return ApiResponse(
+            success=True,
+            message=f"已继续 {len(tasks)} 条中断任务",
+            data={"count": len(tasks)}
+        )
+    except Exception as e:
+        logger.error(f"继续中断任务失败：{e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

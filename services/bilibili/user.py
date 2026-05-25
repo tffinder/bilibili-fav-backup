@@ -75,7 +75,7 @@ class UserAPI(BilibiliClient):
             return False, [], f"获取稍后观看列表失败：{str(e)}"
 
     async def get_watch_history(
-        self, page: int = 1, page_size: int = 50
+        self, page: int = 1, page_size: int = 20
     ) -> Tuple[bool, List[Dict[str, Any]], str]:
         """
         获取观看历史
@@ -93,6 +93,9 @@ class UserAPI(BilibiliClient):
 
         await self.rate_limit()
         try:
+            # 新版历史接口对 ps 很敏感；过大的 page_size 会返回 -400 请求错误。
+            page_size = max(1, min(page_size, 20))
+
             # 使用正确的参数调用 API
             data = await user.get_self_history_new(
                 credential=credential,
@@ -100,14 +103,26 @@ class UserAPI(BilibiliClient):
                 ps=page_size
             )
 
-            # 检查 API 返回状态
-            if data.get("code", 0) != 0:
+            # 检查 API 返回状态。bilibili_api 通常已返回 data 字段本身，但保留兼容。
+            if isinstance(data, dict) and data.get("code", 0) != 0:
                 error_msg = data.get("message", "未知错误")
                 logger.error(f"获取观看历史失败：接口返回错误代码：{data.get('code')}，信息：{error_msg}")
                 return False, [], f"B站API错误：{error_msg}"
 
+            history_list = []
+            if isinstance(data, dict):
+                raw_list = data.get("list", [])
+                if isinstance(raw_list, dict):
+                    history_list = raw_list.get("list", [])
+                elif isinstance(raw_list, list):
+                    history_list = raw_list
+            elif isinstance(data, list):
+                history_list = data
+
             videos: List[Dict[str, Any]] = []
-            for item in data.get("list", {}).get("list", []):
+            for item in history_list:
+                if not isinstance(item, dict):
+                    continue
                 history = item.get("history", {})
                 # 只处理视频类型
                 if history.get("business") != "archive":

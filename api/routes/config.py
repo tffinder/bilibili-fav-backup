@@ -10,6 +10,7 @@ from loguru import logger
 
 from core.config import get_config, ConfigManager
 from services.s3_uploader import S3Uploader
+from services.rclone_uploader import RcloneUploader
 from api.models import ConfigModel, ConfigUpdateRequest, ApiResponse
 
 router = APIRouter(tags=["配置管理"])
@@ -60,7 +61,18 @@ async def get_config_info():
             skip_interactive=config.skip_rules.skip_interactive,
             skip_max_video_size_gib=config.skip_rules.max_video_size_gib,
             up_sync_enabled=config.up_sync.enabled,
-            up_sync_cron=config.up_sync.cron
+            up_sync_cron=config.up_sync.cron,
+            rclone_enabled=config.rclone.enabled,
+            rclone_delete_after_upload=config.rclone.delete_after_upload,
+            rclone_remote_name=config.rclone.remote_name,
+            rclone_remote_path=config.rclone.remote_path,
+            rclone_remote_type=config.rclone.remote_type,
+            rclone_host=config.rclone.host,
+            rclone_user=config.rclone.user,
+            rclone_password=config.rclone.password,
+            rclone_token=config.rclone.token,
+            rclone_vendor=config.rclone.vendor,
+            rclone_extra_flags=config.rclone.extra_flags
         )
 
     except Exception as e:
@@ -109,6 +121,17 @@ CONFIG_FIELD_MAPPING = {
     'skip_max_video_size_gib': ('skip_rules', 'max_video_size_gib'),
     'up_sync_enabled': ('up_sync', 'enabled'),
     'up_sync_cron': ('up_sync', 'cron'),
+    'rclone_enabled': ('rclone', 'enabled'),
+    'rclone_delete_after_upload': ('rclone', 'delete_after_upload'),
+    'rclone_remote_name': ('rclone', 'remote_name'),
+    'rclone_remote_path': ('rclone', 'remote_path'),
+    'rclone_remote_type': ('rclone', 'remote_type'),
+    'rclone_host': ('rclone', 'host'),
+    'rclone_user': ('rclone', 'user'),
+    'rclone_password': ('rclone', 'password'),
+    'rclone_token': ('rclone', 'token'),
+    'rclone_vendor': ('rclone', 'vendor'),
+    'rclone_extra_flags': ('rclone', 'extra_flags'),
 }
 
 
@@ -208,6 +231,23 @@ async def list_s3_files(limit: int = 20):
 
     except Exception as e:
         logger.error(f"获取 S3 文件列表失败：{e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/test/rclone", response_model=ApiResponse)
+async def test_rclone():
+    """测试 Rclone 连接是否正常"""
+    try:
+        rclone = RcloneUploader()
+        connected, message = await rclone.test_connection()
+
+        return ApiResponse(
+            success=connected,
+            message=message
+        )
+
+    except Exception as e:
+        logger.error(f"测试 Rclone 连接失败：{e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

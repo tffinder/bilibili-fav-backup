@@ -124,4 +124,42 @@ debug:
   # ffmpeg 可执行文件路径 (可选，用于合并音视频)
   # 如果不设置，将使用系统 PATH 中的 ffmpeg
   # 示例: "E:\\ffmpeg-n8.0-latest-win64-gpl-8.0\\bin\\ffmpeg.exe"
-  ffmpeg_path: "E:\\ffmpeg-n8.0-latest-win64-gpl-8.0\\bin\\ffmpeg.exe"
+  ffmpeg_path: null
+
+# 同步跳过规则
+skip_rules:
+  # 单 P 时长上限 (秒)，0 = 不限制
+  max_single_duration: 0
+  # 多 P 合计时长上限 (秒)，0 = 不限制
+  max_total_duration: 0
+  # 跳过互动视频
+  skip_interactive: false
+  # 单个视频文件大小上限 (GiB)，0 = 不限制
+  max_video_size_gib: 0
+
+# Rclone 网盘同步配置 (与 S3 二选一)
+rclone:
+  enabled: false
+  delete_after_upload: false
+  # Remote 名称
+  remote_name: ""
+  # 远端基础路径
+  remote_path: "bilibili-backup/"
+  # Remote 类型: webdav, drive, onedrive, dropbox, sftp, ftp, s3
+  remote_type: ""
+  # 连接参数 (按类型选用)
+  host: ""
+  user: ""
+  password: ""
+  # OAuth token JSON (Drive/OneDrive/Dropbox)
+  token: ""
+  # WebDAV vendor: nextcloud, owncloud, other
+  vendor: ""
+  # 额外 rclone 命令行参数
+  extra_flags: ""
+
+# UP 主视频同步配置
+up_sync:
+  enabled: false
+  targets: []
+  cron: "0 3 * * *"
