@@ -52,6 +52,8 @@ class DataRefreshConfig(BaseModel):
     watch_later_cron: str = "0 * * * *"  # 每小时
     history_enabled: bool = True
     history_cron: str = "0 * * * *"  # 每小时
+    source_check_enabled: bool = True
+    source_check_cron: str = "0 4 * * 0"  # 每周日凌晨4点
 
 
 class NotificationConfig(BaseModel):

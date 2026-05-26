@@ -248,17 +248,13 @@ async def _hydrate_video_model(video: Video, progress_map: Dict = None) -> Video
 async def _scan_deleted_videos_task() -> None:
     global _deleted_scan_state
 
-    api = BilibiliAPI()
-    db = await Database.get_instance()
-    videos = await db.get_all_videos()
-    unique_videos = {}
-    for video in videos:
-        unique_videos.setdefault(video.bvid, video)
+    from services.sync_manager import SyncManager
+    sm = SyncManager()
 
     _deleted_scan_state.update({
         "running": True,
         "current": 0,
-        "total": len(unique_videos),
+        "total": 0,
         "deleted": 0,
         "checked": 0,
         "message": "开始检测 B 站源视频状态",
@@ -266,38 +262,15 @@ async def _scan_deleted_videos_task() -> None:
         "finished_at": None
     })
 
+    def on_progress(current, total, message):
+        _deleted_scan_state["current"] = current
+        _deleted_scan_state["total"] = total
+        _deleted_scan_state["checked"] = current
+        _deleted_scan_state["message"] = message
+
     try:
-        for bvid, video in unique_videos.items():
-            _deleted_scan_state["current"] += 1
-            _deleted_scan_state["message"] = f"检测 {video.title}"
-
-            success, _, error = await api.get_video_info(bvid)
-            if success:
-                await db.update_video_source_status(
-                    bvid=bvid,
-                    source_available=True,
-                    source_status="available",
-                    source_error=None
-                )
-                _deleted_scan_state["checked"] += 1
-            elif _is_deleted_error(error):
-                await db.update_video_source_status(
-                    bvid=bvid,
-                    source_available=False,
-                    source_status="deleted",
-                    source_error=error
-                )
-                _deleted_scan_state["checked"] += 1
-                _deleted_scan_state["deleted"] += 1
-            else:
-                await db.update_video_source_status(
-                    bvid=bvid,
-                    source_available=True,
-                    source_status="check_failed",
-                    source_error=error
-                )
-                _deleted_scan_state["checked"] += 1
-
+        result = await sm.scan_source_status(on_progress=on_progress)
+        _deleted_scan_state["deleted"] = result.get("deleted", 0)
     except Exception as e:
         logger.error(f"检测失效视频失败：{e}")
         _deleted_scan_state["message"] = f"检测失败：{e}"

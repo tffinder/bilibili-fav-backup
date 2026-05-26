@@ -63,6 +63,10 @@ class TaskScheduler:
 
         # 添加数据刷新任务
         self._add_data_refresh_jobs()
+
+        # 添加源状态检查任务
+        if self.config.data_refresh.source_check_enabled:
+            self._add_source_check_job()
     
     def _add_sync_job(self) -> None:
         """添加同步任务"""
@@ -269,6 +273,31 @@ class TaskScheduler:
         except Exception as e:
             logger.error(f"观看历史数据刷新异常：{e}")
     
+    def _add_source_check_job(self) -> None:
+        """添加源状态检查任务"""
+        self._add_refresh_job(
+            job_id="source_check",
+            name="B站源状态检查",
+            cron_expr=self.config.data_refresh.source_check_cron,
+            callback=self._run_source_check
+        )
+
+    async def _run_source_check(self) -> None:
+        """执行源状态检查"""
+        if not self.sync_manager:
+            logger.error("同步管理器未初始化")
+            return
+
+        logger.info("定时源状态检查任务触发")
+        try:
+            result = await self.sync_manager.scan_source_status()
+            logger.info(
+                f"源状态检查完成：共 {result['total']} 个，"
+                f"失效 {result['deleted']} 个，正常 {result['available']} 个"
+            )
+        except Exception as e:
+            logger.error(f"源状态检查任务异常：{e}")
+
     async def _run_sync(self) -> None:
         """执行同步任务（内部方法）"""
         if not self.sync_manager:
@@ -397,7 +426,7 @@ class TaskScheduler:
             return
 
         # 移除旧任务
-        for job_id in ["daily_sync", "up_sync", "refresh_watch_later", "refresh_history"]:
+        for job_id in ["daily_sync", "up_sync", "refresh_watch_later", "refresh_history", "source_check"]:
             try:
                 self.scheduler.remove_job(job_id)
             except JobLookupError:
@@ -413,6 +442,10 @@ class TaskScheduler:
 
         # 重新添加数据刷新任务
         self._add_data_refresh_jobs()
+
+        # 重新添加源状态检查任务
+        if self.config.data_refresh.source_check_enabled:
+            self._add_source_check_job()
 
 
 def create_scheduler(sync_manager: SyncManager) -> TaskScheduler:

@@ -72,7 +72,9 @@ async def get_config_info():
             rclone_password=config.rclone.password,
             rclone_token=config.rclone.token,
             rclone_vendor=config.rclone.vendor,
-            rclone_extra_flags=config.rclone.extra_flags
+            rclone_extra_flags=config.rclone.extra_flags,
+            source_check_enabled=config.data_refresh.source_check_enabled,
+            source_check_cron=config.data_refresh.source_check_cron
         )
 
     except Exception as e:
@@ -132,6 +134,8 @@ CONFIG_FIELD_MAPPING = {
     'rclone_token': ('rclone', 'token'),
     'rclone_vendor': ('rclone', 'vendor'),
     'rclone_extra_flags': ('rclone', 'extra_flags'),
+    'source_check_enabled': ('data_refresh', 'source_check_enabled'),
+    'source_check_cron': ('data_refresh', 'source_check_cron'),
 }
 
 

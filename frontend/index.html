@@ -2735,6 +2735,23 @@
                     </div>
 
                     <div class="settings-section" style="margin-top: 16px;">
+                        <div class="settings-section-header">🔍 源状态检查</div>
+                        <div class="settings-section-body">
+                            <div class="form-group">
+                                <label class="checkbox-wrapper">
+                                    <input type="checkbox" id="sourceCheckEnabled">
+                                    <span>定时检查 B 站视频是否失效</span>
+                                </label>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Cron 表达式</label>
+                                <input type="text" class="form-input" id="sourceCheckCron" value="0 4 * * 0">
+                                <div class="form-hint">默认每周日凌晨 4 点执行。同步时也会自动识别失效视频。</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="settings-section" style="margin-top: 16px;">
                         <div class="settings-section-header">🚫 同步跳过规则</div>
                         <div class="settings-section-body">
                             <div class="form-row" style="grid-template-columns: 1fr 1fr 1fr;">
@@ -4057,6 +4074,9 @@
                 document.getElementById('upSyncEnabled').checked = cfg.up_sync_enabled || false;
                 document.getElementById('upSyncCron').value = cfg.up_sync_cron || '0 3 * * *';
 
+                document.getElementById('sourceCheckEnabled').checked = cfg.source_check_enabled !== false;
+                document.getElementById('sourceCheckCron').value = cfg.source_check_cron || '0 4 * * 0';
+
                 const qualityLabel = QUALITY_LABELS[cfg.download_quality] || cfg.download_quality + 'P';
                 document.getElementById('configFavorite').textContent = cfg.bilibili_fav_id || '未设置';
                 document.getElementById('configQuality').textContent = qualityLabel;
@@ -4110,7 +4130,9 @@
                         skip_interactive: document.getElementById('skipInteractive').checked,
                         skip_max_video_size_gib: parseFloat(document.getElementById('skipMaxVideoSizeGib').value) || 0,
                         up_sync_enabled: document.getElementById('upSyncEnabled').checked,
-                        up_sync_cron: document.getElementById('upSyncCron').value
+                        up_sync_cron: document.getElementById('upSyncCron').value,
+                        source_check_enabled: document.getElementById('sourceCheckEnabled').checked,
+                        source_check_cron: document.getElementById('sourceCheckCron').value
                     })
                 });
                 const result = await res.json();

@@ -58,6 +58,8 @@ class ConfigModel(BaseModel):
     rclone_extra_flags: str = ""
     up_sync_enabled: bool = False
     up_sync_cron: str = "0 3 * * *"
+    source_check_enabled: bool = True
+    source_check_cron: str = "0 4 * * 0"
 
 
 class ConfigUpdateRequest(BaseModel):
@@ -112,6 +114,8 @@ class ConfigUpdateRequest(BaseModel):
     rclone_extra_flags: Optional[str] = None
     up_sync_enabled: Optional[bool] = None
     up_sync_cron: Optional[str] = None
+    source_check_enabled: Optional[bool] = None
+    source_check_cron: Optional[str] = None
 
 
 class SingleVideoDownloadRequest(BaseModel):

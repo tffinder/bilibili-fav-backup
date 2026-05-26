@@ -139,7 +139,8 @@ class FavoriteAPI(BilibiliClient):
                         "cover": media.get("cover", ""),
                         "duration": media.get("duration", 0),
                         "fav_time": media.get("fav_time", 0),
-                        "fav_title": data.get("info", {}).get("title", "")
+                        "fav_title": data.get("info", {}).get("title", ""),
+                        "attr": media.get("attr", 0),
                     })
                 if len(medias) < 20:
                     break

@@ -16,6 +16,18 @@ from services.rclone_uploader import RcloneUploader
 from services.notification import NotificationService, NotificationLevel
 
 
+DELETED_ERROR_KEYWORDS = (
+    "不存在", "已删除", "稿件不可见", "视频不见了", "404",
+    "62002", "62004", "稿件已失效", "视频已失效",
+    "not found", "not exist", "deleted", "unavailable",
+)
+
+
+def _is_deleted_error(error: str) -> bool:
+    normalized = (error or "").lower()
+    return any(kw.lower() in normalized for kw in DELETED_ERROR_KEYWORDS)
+
+
 def _progress_failed(progress) -> bool:
     return bool(progress and progress.status in {"failed", "upload_failed"})
 
@@ -513,6 +525,18 @@ class SyncManager:
             # 黑名单：直接跳过，不入队（不打扰用户视野）
             if await self.db.is_blacklisted(bvid):
                 logger.info(f"视频 {bvid} 在黑名单中，跳过")
+                skipped_count += 1
+                continue
+
+            # 失效视频检测：B 站 attr != 0 表示已失效
+            if video_info.get("attr", 0) != 0:
+                logger.info(f"视频 {bvid} 在 B 站已失效 (attr={video_info['attr']})，跳过")
+                await self.db.update_video_source_status(
+                    bvid=bvid,
+                    source_available=False,
+                    source_status="deleted",
+                    source_error=f"收藏夹标记失效 (attr={video_info['attr']})"
+                )
                 skipped_count += 1
                 continue
 
@@ -1117,3 +1141,78 @@ class SyncManager:
             "failed_videos": failed_count,
             "last_sync": recent_history[0].to_dict() if recent_history else None
         }
+
+    async def scan_source_status(self, on_progress=None) -> Dict[str, int]:
+        """
+        扫描所有已备份视频在 B 站的源状态。
+
+        Args:
+            on_progress: 可选回调 (current, total, message)
+
+        Returns:
+            {"total": N, "checked": N, "deleted": N, "available": N, "failed": N}
+        """
+        await self.init_db()
+
+        all_videos = await self.db.get_all_videos()
+        unique = {}
+        for v in all_videos:
+            unique.setdefault(v.bvid, v)
+
+        total = len(unique)
+        checked = 0
+        deleted = 0
+        available = 0
+        check_failed = 0
+
+        for bvid, video in unique.items():
+            checked += 1
+            if on_progress:
+                on_progress(checked, total, f"检测 {video.title}")
+
+            success, _, error = await self.api.get_video_info(bvid)
+            if success:
+                await self.db.update_video_source_status(
+                    bvid=bvid,
+                    source_available=True,
+                    source_status="available",
+                    source_error=None
+                )
+                available += 1
+            elif _is_deleted_error(error):
+                await self.db.update_video_source_status(
+                    bvid=bvid,
+                    source_available=False,
+                    source_status="deleted",
+                    source_error=error
+                )
+                deleted += 1
+            else:
+                await self.db.update_video_source_status(
+                    bvid=bvid,
+                    source_available=True,
+                    source_status="check_failed",
+                    source_error=error
+                )
+                check_failed += 1
+
+        result = {
+            "total": total,
+            "checked": checked,
+            "deleted": deleted,
+            "available": available,
+            "failed": check_failed,
+        }
+
+        if deleted > 0:
+            await self.notification.send_warning(
+                title="源状态扫描完成",
+                message=f"共检测 {total} 个视频，发现 {deleted} 个已失效"
+            )
+        else:
+            await self.notification.send_info(
+                title="源状态扫描完成",
+                message=f"共检测 {total} 个视频，全部正常"
+            )
+
+        return result
