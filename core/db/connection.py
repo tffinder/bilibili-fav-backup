@@ -785,6 +785,95 @@ class Database:
             )
         await self._db.commit()
 
+    @require_db
+    async def get_cached_videos_with_status(
+        self,
+        source_type: str = "favorite",
+        source_id: Optional[int] = None,
+        page: int = 1,
+        page_size: int = 50,
+        search: str = "",
+        status: str = "all",
+    ) -> Dict[str, Any]:
+        """获取缓存视频及其下载状态（轻量列表）。"""
+        where_clauses = ["vc.source_type = ?"]
+        params: List[Any] = [source_type]
+
+        if source_id is not None:
+            where_clauses.append("vc.source_id = ?")
+            params.append(source_id)
+
+        if search:
+            where_clauses.append("(vc.title LIKE ? OR vc.bvid LIKE ? OR vc.owner_name LIKE ?)")
+            params.extend([f"%{search}%"] * 3)
+
+        where_sql = " AND ".join(where_clauses)
+
+        # 总数
+        count_cursor = await self._db.execute(
+            f'SELECT COUNT(DISTINCT vc.bvid) FROM video_cache vc WHERE {where_sql}', params
+        )
+        total = (await count_cursor.fetchone())[0]
+
+        # 分页查询
+        offset = (page - 1) * page_size
+        query = f'''
+            SELECT
+                vc.bvid,
+                vc.title,
+                vc.owner_name,
+                vc.duration,
+                vc.cover_local,
+                vc.cover,
+                vc.source_type,
+                vc.source_id,
+                vc.created_at,
+                ff.title AS folder_name,
+                MIN(CASE
+                    WHEN v.s3_uploaded = 1 THEN 'uploaded'
+                    WHEN v.local_path IS NOT NULL THEN 'downloaded'
+                    WHEN v.upload_failed = 1 THEN 'failed'
+                    ELSE NULL
+                END) AS dl_status,
+                MIN(v.source_status) AS source_status,
+                COUNT(v.id) AS download_count
+            FROM video_cache vc
+            LEFT JOIN videos v ON vc.bvid = v.bvid
+            LEFT JOIN favorite_folders ff ON vc.source_type = 'favorite' AND vc.source_id = ff.fav_id
+            WHERE {where_sql}
+            GROUP BY vc.bvid
+            ORDER BY vc.created_at DESC
+            LIMIT ? OFFSET ?
+        '''
+        params.extend([page_size, offset])
+        cursor = await self._db.execute(query, params)
+        rows = await cursor.fetchall()
+
+        items = []
+        for row in rows:
+            r = dict(row)
+            dl = r['dl_status']
+            src = r['source_status']
+            if src == 'deleted':
+                r['status'] = 'source_deleted'
+            elif dl:
+                r['status'] = dl
+            else:
+                r['status'] = 'pending'
+            items.append(r)
+
+        # 前端状态过滤
+        if status != "all":
+            items = [i for i in items if i['status'] == status]
+
+        return {
+            "items": items,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": (total + page_size - 1) // page_size if total else 0,
+        }
+
     # ==================== 任务队列 ====================
 
     @require_db

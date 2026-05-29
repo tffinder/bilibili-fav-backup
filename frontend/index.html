@@ -2223,6 +2223,7 @@
                 <a class="nav-tab" data-view="upsync">UP主同步</a>
                 <a class="nav-tab" data-view="watchlater">稍后观看</a>
                 <a class="nav-tab" data-view="history">历史记录</a>
+                <a class="nav-tab" data-view="cachelist">下载列表</a>
                 <a class="nav-tab" data-view="settings">设置</a>
             </div>
             <div class="user-menu">
@@ -2633,6 +2634,49 @@
                     <div class="empty-state-text">加载中...</div>
                 </div>
             </div>
+        </div>
+
+        <!-- 下载列表视图 -->
+        <div id="cacheListView" class="view">
+            <div class="view-header">
+                <div>
+                    <div class="view-title">下载列表</div>
+                    <div class="view-subtitle">收藏夹缓存视频及其下载状态</div>
+                </div>
+            </div>
+            <div style="display:flex; gap:12px; margin-bottom:16px; flex-wrap:wrap; align-items:center;">
+                <input type="text" class="form-input" id="cacheSearchInput" placeholder="搜索标题 / BV号 / UP主" style="flex:1; min-width:200px;" onkeydown="if(event.key==='Enter')loadCacheList(1)">
+                <select class="form-input" id="cacheStatusFilter" style="width:140px;" onchange="loadCacheList(1)">
+                    <option value="all">全部状态</option>
+                    <option value="pending">待下载</option>
+                    <option value="downloaded">已下载</option>
+                    <option value="uploaded">已上传</option>
+                    <option value="failed">失败</option>
+                    <option value="source_deleted">B站失效</option>
+                </select>
+                <select class="form-input" id="cacheFolderFilter" style="width:180px;" onchange="loadCacheList(1)">
+                    <option value="">全部收藏夹</option>
+                </select>
+                <button class="btn btn-primary" onclick="loadCacheList(1)">搜索</button>
+            </div>
+            <div id="cacheListStats" style="margin-bottom:12px; color:var(--text-secondary); font-size:0.9em;"></div>
+            <div id="cacheListTable" style="overflow-x:auto;">
+                <table style="width:100%; border-collapse:collapse; font-size:0.9em;">
+                    <thead>
+                        <tr style="border-bottom:2px solid var(--border); text-align:left;">
+                            <th style="padding:8px; width:40px;">封面</th>
+                            <th style="padding:8px;">标题</th>
+                            <th style="padding:8px; width:100px;">UP主</th>
+                            <th style="padding:8px; width:80px;">时长</th>
+                            <th style="padding:8px; width:100px;">收藏夹</th>
+                            <th style="padding:8px; width:90px;">状态</th>
+                            <th style="padding:8px; width:120px;">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="cacheListBody"></tbody>
+                </table>
+            </div>
+            <div id="cacheListPagination" style="display:flex; justify-content:center; gap:8px; margin-top:16px;"></div>
         </div>
 
         <!-- 设置视图 -->
@@ -3070,6 +3114,7 @@
                 'upsync': 'upsyncView',
                 'watchlater': 'watchlaterView',
                 'history': 'historyView',
+                'cachelist': 'cacheListView',
                 'settings': 'settingsView'
             };
 
@@ -3085,6 +3130,9 @@
                 loadWatchHistory();
             } else if (viewName === 'folders') {
                 loadUserFavorites();
+            } else if (viewName === 'cachelist') {
+                loadCacheListFolders();
+                loadCacheList(1);
             } else if (viewName === 'settings') {
                 loadBlacklist();
             }
@@ -4010,6 +4058,146 @@
                 }
             } catch (e) {
                 showToast('批量重试失败：' + e.message, 'error');
+            }
+        }
+
+        // 下载列表（缓存视频）
+        let cacheListPage = 1;
+
+        async function loadCacheListFolders() {
+            try {
+                const res = await fetch(`${API_BASE}/user/favorites`);
+                const result = await res.json();
+                const select = document.getElementById('cacheFolderFilter');
+                if (!result.success || !result.data) return;
+                const folders = Array.isArray(result.data) ? result.data : (result.data.folders || []);
+                const current = select.value;
+                select.innerHTML = '<option value="">全部收藏夹</option>';
+                for (const f of folders) {
+                    const opt = document.createElement('option');
+                    opt.value = f.id || f.fav_id;
+                    opt.textContent = f.title || f.name;
+                    select.appendChild(opt);
+                }
+                select.value = current;
+            } catch (e) { /* ignore */ }
+        }
+
+        async function loadCacheList(page) {
+            cacheListPage = page || 1;
+            const search = document.getElementById('cacheSearchInput').value.trim();
+            const status = document.getElementById('cacheStatusFilter').value;
+            const folderId = document.getElementById('cacheFolderFilter').value;
+
+            const params = new URLSearchParams({
+                page: cacheListPage,
+                page_size: 50,
+                search: search,
+                status: status
+            });
+            if (folderId) params.append('source_id', folderId);
+
+            try {
+                const res = await fetch(`${API_BASE}/cache/videos?${params}`);
+                const result = await res.json();
+                if (result.success) {
+                    renderCacheList(result.data);
+                } else {
+                    document.getElementById('cacheListBody').innerHTML =
+                        '<tr><td colspan="7" style="padding:20px; text-align:center; color:var(--text-secondary);">加载失败</td></tr>';
+                }
+            } catch (e) {
+                document.getElementById('cacheListBody').innerHTML =
+                    `<tr><td colspan="7" style="padding:20px; text-align:center; color:var(--error);">错误：${e.message}</td></tr>`;
+            }
+        }
+
+        function renderCacheList(data) {
+            const items = data.items || [];
+            const total = data.total || 0;
+            const totalPages = data.total_pages || 1;
+            const page = data.page || 1;
+
+            document.getElementById('cacheListStats').textContent =
+                `共 ${total} 个视频，第 ${page}/${totalPages} 页`;
+
+            const tbody = document.getElementById('cacheListBody');
+            if (!items.length) {
+                tbody.innerHTML = '<tr><td colspan="7" style="padding:20px; text-align:center; color:var(--text-secondary);">暂无数据</td></tr>';
+                document.getElementById('cacheListPagination').innerHTML = '';
+                return;
+            }
+
+            const statusLabels = {
+                'downloaded': '<span style="color:var(--success);">✓ 已下载</span>',
+                'uploaded': '<span style="color:var(--accent);">☁ 已上传</span>',
+                'pending': '<span style="color:var(--warning);">⏳ 待下载</span>',
+                'failed': '<span style="color:var(--error);">✗ 失败</span>',
+                'source_deleted': '<span style="color:var(--warning);">⚠ B站失效</span>'
+            };
+
+            tbody.innerHTML = items.map(item => {
+                const cover = item.cover_local || item.cover || '';
+                const coverHtml = cover
+                    ? `<img src="${cover.startsWith('http') ? cover : '/api/covers/' + item.bvid}" style="width:40px;height:28px;object-fit:cover;border-radius:4px;" onerror="this.style.display='none'">`
+                    : '<div style="width:40px;height:28px;background:var(--surface-2);border-radius:4px;"></div>';
+
+                const mins = Math.floor((item.duration || 0) / 60);
+                const secs = (item.duration || 0) % 60;
+                const durationStr = `${mins}:${String(secs).padStart(2, '0')}`;
+
+                const statusHtml = statusLabels[item.status] || item.status;
+
+                let actions = '';
+                if (item.status === 'pending' || item.status === 'failed') {
+                    actions = `<button class="btn btn-text" style="color:var(--accent);" onclick="cacheListDownload('${item.bvid}')">下载</button>`;
+                } else if (item.status === 'downloaded' || item.status === 'uploaded') {
+                    actions = `<a href="https://www.bilibili.com/video/${item.bvid}" target="_blank" class="btn btn-text">查看</a>`;
+                }
+
+                return `<tr style="border-bottom:1px solid var(--border);">
+                    <td style="padding:6px 8px;">${coverHtml}</td>
+                    <td style="padding:6px 8px;"><a href="https://www.bilibili.com/video/${item.bvid}" target="_blank" title="${item.title}" style="color:var(--text);text-decoration:none;">${item.title.length > 40 ? item.title.slice(0, 40) + '...' : item.title}</a><br><span style="font-size:0.8em;color:var(--text-secondary);">${item.bvid}</span></td>
+                    <td style="padding:6px 8px;font-size:0.85em;">${item.owner_name || ''}</td>
+                    <td style="padding:6px 8px;font-size:0.85em;">${durationStr}</td>
+                    <td style="padding:6px 8px;font-size:0.85em;">${item.folder_name || ''}</td>
+                    <td style="padding:6px 8px;font-size:0.85em;">${statusHtml}</td>
+                    <td style="padding:6px 8px;">${actions}</td>
+                </tr>`;
+            }).join('');
+
+            // 分页
+            const pag = document.getElementById('cacheListPagination');
+            if (totalPages <= 1) {
+                pag.innerHTML = '';
+                return;
+            }
+            let pagHtml = '';
+            if (page > 1) pagHtml += `<button class="btn btn-text" onclick="loadCacheList(${page - 1})">上一页</button>`;
+            const start = Math.max(1, page - 2);
+            const end = Math.min(totalPages, page + 2);
+            for (let i = start; i <= end; i++) {
+                pagHtml += `<button class="btn ${i === page ? 'btn-primary' : 'btn-text'}" onclick="loadCacheList(${i})" style="min-width:36px;">${i}</button>`;
+            }
+            if (page < totalPages) pagHtml += `<button class="btn btn-text" onclick="loadCacheList(${page + 1})">下一页</button>`;
+            pag.innerHTML = pagHtml;
+        }
+
+        async function cacheListDownload(bvid) {
+            try {
+                const res = await fetch(`${API_BASE}/download-video`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ video_input: bvid })
+                });
+                const result = await res.json();
+                if (result.success) {
+                    showToast(`已加入下载队列：${bvid}`, 'success');
+                } else {
+                    showToast('下载失败：' + (result.message || '未知错误'), 'error');
+                }
+            } catch (e) {
+                showToast('下载失败：' + e.message, 'error');
             }
         }
 

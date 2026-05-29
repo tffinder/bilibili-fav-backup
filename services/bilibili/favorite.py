@@ -127,8 +127,6 @@ class FavoriteAPI(BilibiliClient):
                     credential=credential
                 )
                 medias = data.get("medias", []) or []
-                if not medias:
-                    break
                 for media in medias:
                     videos.append({
                         "bvid": media.get("bvid", ""),
@@ -142,7 +140,8 @@ class FavoriteAPI(BilibiliClient):
                         "fav_title": data.get("info", {}).get("title", ""),
                         "attr": media.get("attr", 0),
                     })
-                if len(medias) < 20:
+                has_more = data.get("has_more", False)
+                if not has_more or not medias:
                     break
                 page += 1
                 await self.rate_limit()
